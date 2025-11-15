@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# host wrapper for a container-hosted CSL compiler
+
+
+# locate our own directory
+MY_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+printf "\033[34m[INFO]\033[0m === Beginning compilation ===\n"
+"${MY_DIR}/sdk_debug_shell" compile "$@"
+RET=$?
+
+if [ ${RET} -eq 0 ] && [[ "$@" != *"--help"* ]]; then
+  printf "\033[34m[INFO]\033[0m Compilation successful\n"
+fi
+
+exit ${RET}

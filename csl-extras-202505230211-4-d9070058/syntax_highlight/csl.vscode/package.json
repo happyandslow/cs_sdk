@@ -1,0 +1,27 @@
+{
+    "name": "csl",
+    "displayName": "Cerebras Software Language (CSL)",
+    "description": "Language support for CSL",
+    "version": "0.0.1",
+    "icon": "images/cerebras-icon.png",
+    "publisher": "cerebras",
+    "engines": {
+        "vscode": "^1.45.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [{
+            "id": "csl",
+            "aliases": ["CSL", "csl"],
+            "extensions": [".csl"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "csl",
+            "scopeName": "source.csl",
+            "path": "./syntaxes/csl.tmLanguage.json"
+        }]
+    }
+}

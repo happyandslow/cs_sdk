@@ -1,0 +1,35 @@
+{
+  "rpc_symbols": [
+    {
+      "id": 1,
+      "immutable": 0,
+      "kind": "Var",
+      "name": "A",
+      "sym_name": "ptr_A",
+      "type": "[*]f32"
+    },
+    {
+      "id": 2,
+      "immutable": 0,
+      "kind": "Var",
+      "name": "B",
+      "sym_name": "ptr_B",
+      "type": "[*]f32"
+    },
+    {
+      "id": 3,
+      "immutable": 0,
+      "kind": "Var",
+      "name": "C",
+      "sym_name": "ptr_C",
+      "type": "[*]f32"
+    },
+    {
+      "id": 4,
+      "kind": "Func",
+      "name": "main",
+      "sym_name": "main",
+      "type": "void"
+    }
+  ]
+}

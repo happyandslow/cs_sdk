@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+# host wrapper for a container-hosted python
+
+# locate our own directory
+MY_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+printf "\033[34m[INFO]\033[0m === Calling container-hosted python ===\n" >&2
+
+# the SIF should be adjacent to us
+shopt -s nullglob
+SIFS=("$MY_DIR"/*.sif)
+shopt -u nullglob
+
+if (( ${#SIFS[@]} <= 0)); then
+  printf "\033[31m[ERROR]\033[0m SIF not found\n" >&2
+  exit 1
+fi
+if (( ${#SIFS[@]} > 1)); then
+  printf "\033[33m[WARNING]\033[0m Multiple SIFs found: %s\n" "${SIFS[*]}" >&2
+fi
+printf "\033[34m[INFO]\033[0m Using SIF: %s\n" "${SIFS[0]}" >&2
+
+if ! command -v singularity &>/dev/null; then
+  printf "\033[31m[ERROR]\033[0m singularity not in \$PATH\n" >&2
+  exit 1
+fi
+
+PWD=$(realpath $(pwd))
+exec singularity exec "--bind=${PWD}" "--pwd=${PWD}" -C \
+  --bind=${TMPDIR:-/tmp}:/tmp -- "${SIFS[0]}" \
+  python "$@"
