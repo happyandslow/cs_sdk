@@ -6,13 +6,13 @@ param N: i16;
 param width: i16;
 
 const memcpy = @import_module("<memcpy/get_params>", .{
-  .width = width ,
-  .height = 2
+  .width = width * 2,
+  .height = 1
 });
 
 layout {
   // PE coordinates are (column, row)
-  @set_rectangle(width , 2);
+  @set_rectangle(width * 2, 1);
   for (@range(i16, width)) |x| {
     @set_tile_code(x, 0, "pe_program_r1.csl", .{
       .memcpy_params = memcpy.get_params(x),
@@ -20,8 +20,8 @@ layout {
       .N = N
     });
   }
-  for (@range(i16, width)) |x| {
-    @set_tile_code(x, 1, "pe_program_r2.csl", .{
+  for (@range(i16, width, width * 2, 1)) |x| {
+    @set_tile_code(x, 0, "pe_program_r2.csl", .{
       .memcpy_params = memcpy.get_params(x),
       .M = M,
       .N = N

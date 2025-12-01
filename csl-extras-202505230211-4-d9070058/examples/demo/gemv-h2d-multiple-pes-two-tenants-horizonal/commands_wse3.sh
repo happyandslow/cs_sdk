@@ -4,6 +4,6 @@ set -e
 
 # cslc --arch=wse3 ./layout.csl --fabric-dims=11,3 \
 # --fabric-offsets=4,1 --params=M:4,N:6,width:4 -o out --memcpy --channels 1
-cslc --arch=wse3 ./layout_r.csl --fabric-dims=11,4 \
+cslc --arch=wse3 ./layout_r.csl --fabric-dims=15,3 \
 --fabric-offsets=4,1 --params=M:4,N:6,width:4 -o out --memcpy --channels 1
 cs_python run.py --name out
