@@ -78,6 +78,7 @@
 import json
 import random
 import struct
+import time
 from typing import Optional
 
 import numpy as np
@@ -243,6 +244,8 @@ def main():
   assert fabric_width >= min_fabric_width
   assert fabric_height >= min_fabric_height
 
+  fabric_width = 762 #762
+  fabric_height = 1172 #1172
   # prepare the simulation
   print("store ELFs and log files in the folder ", dirname)
 
@@ -313,7 +316,7 @@ def main():
     print("step 1: sync() synchronizes all PEs and records reference clock")
     runner.call("f_sync", [], nonblock=True)
 
-    print("step 2: tic() records time_start")
+    print(f"step 2: tic() records time_start - host time {time.perf_counter()}")
     runner.call("f_tic", [], nonblock=True)
 
     if args.d2h:
@@ -349,7 +352,7 @@ def main():
             nonblock=True,
         )
 
-    print("step 4: toc() records time_end")
+    print(f"step 4: toc() records time_end - host time {time.perf_counter()}")
     runner.call("f_toc", [], nonblock=False)
 
     print("step 5: prepare (time_start, time_end)")

@@ -1,5 +1,3 @@
-#!/usr/bin/env cs_python
-# pylint: disable=too-many-function-args
 """ test bandwidth between host and device
 
     The host connects the device via 100Gbps ethernets. The data is distributed
@@ -77,20 +75,19 @@
        bandwidth = ((wvlts * 4)/time_send)*loop_count
 """
 
+import json
 import random
-import shutil
 import struct
-import subprocess
-import os
-from pathlib import Path
+import time
 from typing import Optional
 
 import numpy as np
 from bw_cmd_parser import parse_args
 
-from cerebras.sdk.runtime.sdkruntimepybind import (  # pylint: disable=no-name-in-module
-    MemcpyDataType, MemcpyOrder, SdkRuntime,
-)
+from cerebras.appliance.pb.sdk.sdk_common_pb2 import MemcpyDataType, MemcpyOrder # pylint: disable=import-error,no-name-in-module
+from cerebras.sdk.client import SdkCompiler, SdkRuntime # pylint: disable=import-error,no-name-in-module
+
+hash_filename = "hash.json"
 
 
 def float_to_hex(f):
@@ -111,7 +108,7 @@ def cast_uint32(x):
     val = np.uint32(x)
   elif isinstance(x, float):
     z = np.float32(x)
-    val = z.view(np.uint32)
+    val = z.view(np.uint32) # pylint: disable=too-many-function-args
   else:
     raise RuntimeError(f"type of x {type(x)} is not supported")
 
@@ -119,7 +116,8 @@ def cast_uint32(x):
 
 
 def csl_compile_core(
-    cslc: str,
+    csl_path: str,  # path to CSL files
+    out_path: str,  # path where to store the artifact
     width: int,  # width of the core
     height: int,  # height of the core
     pe_length: int,
@@ -129,7 +127,6 @@ def csl_compile_core(
     fabric_height: int,
     core_fabric_offset_x: int,  # fabric-offsets of the core
     core_fabric_offset_y: int,
-    use_precompile: bool,
     arch: Optional[str],
     C0: int,
     C1: int,
@@ -140,10 +137,8 @@ def csl_compile_core(
     width_west_buf: int,
     width_east_buf: int,
 ):
-  if not use_precompile:
+  with SdkCompiler() as compiler:
     args = []
-    args.append(cslc)  # command
-    args.append(file_config)
     args.append(f"--fabric-dims={fabric_width},{fabric_height}")
     args.append(f"--fabric-offsets={core_fabric_offset_x},{core_fabric_offset_y}")
     args.append(f"--params=width:{width},height:{height},pe_length:{pe_length}")
@@ -154,6 +149,7 @@ def csl_compile_core(
     args.append(f"--params=C4_ID:{C4}")
 
     args.append(f"-o={elf_dir}")
+
     if arch is not None:
       args.append(f"--arch={arch}")
     args.append("--memcpy")
@@ -161,17 +157,17 @@ def csl_compile_core(
     args.append(f"--width-west-buf={width_west_buf}")
     args.append(f"--width-east-buf={width_east_buf}")
 
-    print(f"subprocess.check_call(args = {args}")
-    subprocess.check_call(args)
-  else:
-    print("\tuse pre-compile ELFs")
+    args_str = " ".join(args)
+    hashstr = compiler.compile(csl_path, file_config, args_str, out_path)
+    print("compile artifact:", hashstr)
+    return hashstr
 
 
 def hwl_2_oned_colmajor(height: int, width: int, pe_length: int, A_hwl: np.ndarray):
   """
     Given a 3-D tensor A[height][width][pe_length], transform it to
     1D array by column-major
-    """
+  """
   A_1d = np.zeros(height * width * pe_length, np.float32)
   idx = 0
   for l in range(pe_length):
@@ -182,23 +178,62 @@ def hwl_2_oned_colmajor(height: int, width: int, pe_length: int, A_hwl: np.ndarr
   return A_1d
 
 
+def print_timing_stats(stats: dict):
+  """Print timing statistics in a formatted way."""
+  print("\n" + "="*70)
+  print("SdkRuntime Overhead Timing Breakdown")
+  print("="*70)
+  
+  if 'sdkruntime_creation' in stats:
+    print(f"SdkRuntime object creation:     {stats['sdkruntime_creation']*1000:.2f} ms")
+  
+  if 'context_enter' in stats:
+    print(f"Context manager entry (load+run): {stats['context_enter']*1000:.2f} ms")
+    if 'context_enter' in stats and stats.get('total_init_time', 0) > 0:
+      pct = stats['context_enter'] / stats['total_init_time'] * 100
+      print(f"  └─ Percentage of init:          {pct:.1f}%")
+  
+  if 'symbol_loading' in stats:
+    print(f"Symbol ID retrieval ({stats.get('num_symbols', 0)} symbols): {stats['symbol_loading']*1000:.2f} ms")
+  
+  if 'total_init_time' in stats:
+    print(f"\nTotal initialization time:      {stats['total_init_time']*1000:.2f} ms")
+  
+  if 'first_call' in stats:
+    print(f"\nFirst runtime.call() overhead:   {stats['first_call']*1000:.2f} ms")
+  
+  if 'total_memcpy_time' in stats:
+    print(f"Total memcpy operations:         {stats['total_memcpy_time']*1000:.2f} ms")
+    print(f"  ├─ Number of memcpy ops:        {stats.get('num_memcpy_ops', 0)}")
+    if stats.get('num_memcpy_ops', 0) > 0:
+      avg = stats['total_memcpy_time'] / stats['num_memcpy_ops'] * 1000
+      print(f"  └─ Average per operation:      {avg:.2f} ms")
+  
+  if 'total_call_time' in stats:
+    print(f"Total runtime.call() operations:  {stats['total_call_time']*1000:.2f} ms")
+    print(f"  ├─ Number of call ops:          {stats.get('num_call_ops', 0)}")
+    if stats.get('num_call_ops', 0) > 0:
+      avg = stats['total_call_time'] / stats['num_call_ops'] * 1000
+      print(f"  └─ Average per operation:      {avg:.2f} ms")
+  
+  if 'context_exit' in stats:
+    print(f"\nContext manager exit (stop):     {stats['context_exit']*1000:.2f} ms")
+  
+  if 'total_runtime_time' in stats:
+    print(f"\nTotal runtime lifetime:          {stats['total_runtime_time']*1000:.2f} ms")
+  
+  print("="*70 + "\n")
+
+
 # How to compile:
-#  <path/to/cslc> src/bw_sync_layout.csl --fabric-dims=12,7 --fabric-offsets=4,1 \
-#    --params=width:5,height:5,pe_length:5 \
-#    --params=C0_ID:0 --params=C1_ID:1 --params=C2_ID:2 \
-#    --params=C3_ID:3 --params=C4_ID:4 \
-#    -o=latest --memcpy --channels=1 --width-west-buf=0 --width-east-buf=0
-# or
 #  python run.py -m=5 -n=5 -k=5 --latestlink latest --channels=1 \
 #    --width-west-buf=0 --width-east-buf=0 \
-#    --compile-only --driver=<path/to/cslc>
+#    --compile-only
 #
 # How to run:
 #  python run.py -m=5 -n=5 -k=5 --latestlink latest --channels=1 \
 #   --width-west-buf=0 --width-east-buf=0 \
 #   --run-only --loop_count=1
-#
-# To run a WSE, add --cmaddr=<IP address of WSE>
 #
 def main():
   """Main method to run the example code."""
@@ -206,12 +241,6 @@ def main():
   random.seed(127)
 
   args, dirname = parse_args()
-
-  cslc = "cslc"
-  if args.driver is not None:
-    cslc = args.driver
-
-  print(f"cslc = {cslc}")
 
   width_west_buf = args.width_west_buf
   width_east_buf = args.width_east_buf
@@ -261,15 +290,14 @@ def main():
 
   assert fabric_width >= min_fabric_width
   assert fabric_height >= min_fabric_height
+  fabric_width = 762 #762
+  fabric_height = 1172 #1172
 
   # prepare the simulation
   print("store ELFs and log files in the folder ", dirname)
 
-  # core dump after execution is complete
-  # core_path = os.path.join(dirname, "core.out")
-
   # layout of a rectangle
-  code_csl = "src/bw_sync_layout.csl"
+  code_csl = "bw_sync_layout.csl"
 
   C0 = 0
   C1 = 1
@@ -277,57 +305,119 @@ def main():
   C3 = 3
   C4 = 4
 
-  csl_compile_core(
-      cslc,
-      width,
-      height,
-      pe_length,
-      code_csl,
-      dirname,
-      fabric_width,
-      fabric_height,
-      core_fabric_offset_x,
-      core_fabric_offset_y,
-      args.run_only,
-      args.arch,
-      C0,
-      C1,
-      C2,
-      C3,
-      C4,
-      channels,
-      width_west_buf,
-      width_east_buf,
-  )
+  csl_path = "./src"
+  out_path = "."
+
   if args.compile_only:
+    print(
+        "WARNING: compile the code, don't run SdkRuntime because "
+        "it should be done in a separate appliance job"
+    )
+    hashstr = csl_compile_core(
+        csl_path,
+        out_path,
+        width,
+        height,
+        pe_length,
+        code_csl,
+        dirname,
+        fabric_width,
+        fabric_height,
+        core_fabric_offset_x,
+        core_fabric_offset_y,
+        args.arch,
+        C0,
+        C1,
+        C2,
+        C3,
+        C4,
+        channels,
+        width_west_buf,
+        width_east_buf,
+    )
+    print(f"Dump artifact name to file {hash_filename}")
+    with open(hash_filename, "w", encoding="utf-8") as write_file:
+      json.dump(hashstr, write_file)
     print("COMPILE ONLY: EXIT")
     return
 
-  files = [f for f in os.listdir('.') if os.path.isfile(f)]
-  files_string = '\n'.join(files)
-  print(f"Available files: {files_string}")
+  print(f"Load artifact name from file {hash_filename}")
+  with open(hash_filename, "r", encoding="utf-8") as f:
+    artifact_path = json.load(f)
+
   # output tensor via D2H
   E_1d = np.zeros(height * width * pe_length, np.float32)
 
   memcpy_dtype = MemcpyDataType.MEMCPY_32BIT
-  runner = SdkRuntime(dirname, cmaddr=args.cmaddr)
 
+  # Timing statistics
+  timing_stats = {
+    'sdkruntime_creation': 0.0,
+    'context_enter': 0.0,
+    'symbol_loading': 0.0,
+    'total_init_time': 0.0,
+    'first_call': 0.0,
+    'total_memcpy_time': 0.0,
+    'num_memcpy_ops': 0,
+    'total_call_time': 0.0,
+    'num_call_ops': 0,
+    'context_exit': 0.0,
+    'total_runtime_time': 0.0,
+  }
+  
+  runtime_start_time = time.perf_counter()
+  
+  # Time SdkRuntime object creation
+  t0 = time.perf_counter()
+  runner = SdkRuntime(artifact_path, simulator=args.simulator)
+  t1 = time.perf_counter()
+  timing_stats['sdkruntime_creation'] = t1 - t0
+  
+  # Time context manager entry (includes load() and run())
+  t0 = time.perf_counter()
+  runner.__enter__()
+  t1 = time.perf_counter()
+  timing_stats['context_enter'] = t1 - t0
+  
+  # Time symbol ID retrieval
+  t0 = time.perf_counter()
   symbol_A = runner.get_id("A")
   symbol_time_memcpy = runner.get_id("time_memcpy")
   symbol_time_ref = runner.get_id("time_ref")
-
-  runner.load()
-  runner.run()
+  t1 = time.perf_counter()
+  timing_stats['symbol_loading'] = t1 - t0
+  timing_stats['num_symbols'] = 3
+  
+  timing_stats['total_init_time'] = (
+    timing_stats['sdkruntime_creation'] +
+    timing_stats['context_enter'] +
+    timing_stats['symbol_loading']
+  )
+  
+  # load() and run() are called by client.Sdkruntime.__enter__
+  # runner.load()
+  # runner.run()
 
   print("step 1: sync() synchronizes all PEs and records reference clock")
+  # Time first call (may have additional overhead)
+  t0 = time.perf_counter()
   runner.call("f_sync", [], nonblock=True)
+  t1 = time.perf_counter()
+  timing_stats['first_call'] = t1 - t0
+  timing_stats['num_call_ops'] = 1
+  timing_stats['total_call_time'] = timing_stats['first_call']
 
   print("step 2: tic() records time_start")
+  t0 = time.perf_counter()
   runner.call("f_tic", [], nonblock=True)
+  t1 = time.perf_counter()
+  timing_stats['total_call_time'] += (t1 - t0)
+  timing_stats['num_call_ops'] += 1
 
   if args.d2h:
     for j in range(loop_count):
       print(f"step 3: measure D2H with loop_count = {loop_count}, {j}-th")
+      t0 = time.perf_counter()
       runner.memcpy_d2h(
           E_1d,
           symbol_A,
@@ -341,9 +431,13 @@ def main():
           order=MemcpyOrder.COL_MAJOR,
           nonblock=True,
       )
+      t1 = time.perf_counter()
+      timing_stats['total_memcpy_time'] += (t1 - t0)
+      timing_stats['num_memcpy_ops'] += 1
   else:
     for j in range(loop_count):
       print(f"step 3: measure H2D with loop_count = {loop_count}, {j}-th")
+      t0 = time.perf_counter()
       runner.memcpy_h2d(
           symbol_A,
           A_1d,
@@ -357,17 +451,29 @@ def main():
           order=MemcpyOrder.COL_MAJOR,
           nonblock=True,
       )
+      t1 = time.perf_counter()
+      timing_stats['total_memcpy_time'] += (t1 - t0)
+      timing_stats['num_memcpy_ops'] += 1
 
   print("step 4: toc() records time_end")
+  t0 = time.perf_counter()
   runner.call("f_toc", [], nonblock=False)
+  t1 = time.perf_counter()
+  timing_stats['total_call_time'] += (t1 - t0)
+  timing_stats['num_call_ops'] += 1
 
   print("step 5: prepare (time_start, time_end)")
+  t0 = time.perf_counter()
   runner.call("f_memcpy_timestamps", [], nonblock=False)
+  t1 = time.perf_counter()
+  timing_stats['total_call_time'] += (t1 - t0)
+  timing_stats['num_call_ops'] += 1
 
   print("step 6: D2H (time_start, time_end)")
   # time_start/time_end is of type u16[3]
   # {time_start, time_end} is packed into three f32
   time_memcpy_1d_f32 = np.zeros(height * width * 3, np.float32)
+  t0 = time.perf_counter()
   runner.memcpy_d2h(
       time_memcpy_1d_f32,
       symbol_time_memcpy,
@@ -379,16 +485,23 @@ def main():
       streaming=False,
       data_type=memcpy_dtype,
       order=MemcpyOrder.ROW_MAJOR,
-      nonblock=False,
+      nonblock=True,
   )
-  time_memcpy_hwl = np.reshape(time_memcpy_1d_f32, (height, width, 3), order="C")
+  t1 = time.perf_counter()
+  timing_stats['total_memcpy_time'] += (t1 - t0)
+  timing_stats['num_memcpy_ops'] += 1
 
   print("step 7: prepare reference clock")
+  t0 = time.perf_counter()
   runner.call("f_reference_timestamps", [], nonblock=False)
+  t1 = time.perf_counter()
+  timing_stats['total_call_time'] += (t1 - t0)
+  timing_stats['num_call_ops'] += 1
 
   print("step 8: D2H reference clock")
   # time_ref is of type u16[3], packed into two f32
   time_ref_1d_f32 = np.zeros(height * width * 2, np.float32)
+  t0 = time.perf_counter()
   runner.memcpy_d2h(
       time_ref_1d_f32,
       symbol_time_ref,
@@ -402,24 +515,23 @@ def main():
       order=MemcpyOrder.ROW_MAJOR,
       nonblock=False,
   )
+  t1 = time.perf_counter()
+  timing_stats['total_memcpy_time'] += (t1 - t0)
+  timing_stats['num_memcpy_ops'] += 1
+
+  # Time context manager exit (includes stop())
+  t0 = time.perf_counter()
+  runner.__exit__(None, None, None)
+  t1 = time.perf_counter()
+  timing_stats['context_exit'] = t1 - t0
+  
+  timing_stats['total_runtime_time'] = time.perf_counter() - runtime_start_time
+  
+  # Print timing statistics
+  print_timing_stats(timing_stats)
+
+  time_memcpy_hwl = np.reshape(time_memcpy_1d_f32, (height, width, 3), order="C")
   time_ref_hwl = np.reshape(time_ref_1d_f32, (height, width, 2), order="C")
-
-  # runner.stop(core_path)
-  runner.stop()
-
-  if args.simulator:
-    # move simulation log and core dump to the given folder
-    dst_log = Path(f"{dirname}/sim.log")
-    src_log = Path("sim.log")
-    if src_log.exists():
-      shutil.move(src_log, dst_log)
-
-    dst_trace = Path(f"{dirname}/simfab_traces")
-    src_trace = Path("simfab_traces")
-    if dst_trace.exists():
-      shutil.rmtree(dst_trace)
-    if src_trace.exists():
-      shutil.move(src_trace, dst_trace)
 
   # time_start = start time of H2D/D2H
   time_start = np.zeros((height, width)).astype(int)
@@ -468,7 +580,8 @@ def main():
   min_time_start = time_start.min()
   max_time_end = time_end.max()
   cycles_send = max_time_end - min_time_start
-  time_send = (cycles_send / 0.85) * 1.0e-3
+  # time_send = (cycles_send / 0.85) * 1.0e-3
+  time_send = (cycles_send / 1.1) * 1.0e-3
   bandwidth = ((wvlts * 4) / time_send) * loop_count
   print(f"wvlts = {wvlts}, loop_count = {loop_count}")
   print(f"cycles_send = {cycles_send} cycles")

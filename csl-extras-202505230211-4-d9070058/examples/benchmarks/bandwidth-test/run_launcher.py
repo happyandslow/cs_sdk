@@ -30,10 +30,14 @@ with SdkLauncher(artifact_path, simulator=False, disable_version_check=True) as 
     # Run the original host code as-is on the appliance,
     # using the same cmd as when using the Singularity container
     #response = launcher.run("cs_python run.py --name out --cmaddr %CMADDR%")
-    response = launcher.run("cs_python run.py -m=5 -n=5 -k=5 --latestlink latest --channels=1 --width-west-buf=0 --width-east-buf=0 --d2h --arch=wse3 --run-only --loop_count=1 ")
+    # response = launcher.run("cs_python run.py -m=5 -n=5 -k=5 --latestlink latest --channels=1 --width-west-buf=0 --width-east-buf=0 --d2h --arch=wse3 --run-only --loop_count=1 ")
+    
+    # response = launcher.run("cs_python run.py -m=448 -n=448 -k=4096 --latestlink latest --channels=16 --width-west-buf=152 --width-east-buf=152 --arch=wse3 --run-only --loop_count=1 --cmaddr %CMADDR%")
+    response = launcher.run("cs_python run.py -m=448 -n=448 -k=4096 --latestlink latest --channels=16 --width-west-buf=152 --width-east-buf=152 --arch=wse3 --d2h --run-only --loop_count=1 --cmaddr %CMADDR%")
+    
     print("Host code execution response: ", response)
     
     # # cs_python ./run.py -m=5 -n=5 -k=5 --latestlink out --channels=1 --width-west-buf=0 --width-east-buf=0 --run-only --loop_count=1
 
     # Fetch files from the appliance
-    launcher.download_artifact("sim.log", "./output_dir/sim.log")
+    # launcher.download_artifact("sim.log", "./output_dir/sim.log")
