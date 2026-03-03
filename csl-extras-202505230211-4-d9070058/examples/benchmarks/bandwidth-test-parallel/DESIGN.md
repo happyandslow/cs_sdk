@@ -84,6 +84,37 @@ multi-PE regions is the user's responsibility (demux/mux pattern).
    Multiple channels are auto-managed by the memcpy framework; with direct link,
    multiple streams serve the same role but each must be explicitly wired.
 
+### Fabric Dimensions: SdkLayout vs SdkCompiler
+
+CSL always compiles against the **full hardware fabric** — there is no partial compilation
+that targets only the PEs your program actually uses. For WSE-3 this is 762×1172. Attempting
+to compile with a smaller `--fabric-dims` than the actual hardware results in a runtime error.
+
+The two compilation paths handle this differently:
+
+| Path | How fabric dims are specified |
+|---|---|
+| `SdkCompiler` / `cslc` (memcpy) | Must be passed explicitly: `--fabric-dims=762,1172` |
+| `SdkLayout.compile()` (direct-link) | Inherited **automatically** from the `SdkExecutionPlatform` object |
+
+In `run_single.py`, the platform object is created by:
+```python
+platform = get_platform(args.cmaddr, config, target)
+```
+- `cmaddr=None` → platform uses WSE-3 simulator defaults (full 762×1172 fabric).
+- `cmaddr=<IP:PORT>` → platform queries the real CS system and gets its exact dimensions.
+
+`layout.compile(out_prefix=args.name)` then reads the fabric dimensions directly from
+`platform`, requiring no additional flags.
+
+**What `--height` and `--pe-length` actually control:**
+- `place()` coordinates: where within the full fabric the four regions are positioned.
+- CSL param values (`pe_length`) and data array sizes on the host.
+- They do **not** affect the compiled fabric size; unused PEs receive an empty program.
+
+`SimfabConfig` (passed to `get_platform`) controls simulator behaviour only
+(`dump_core`, `num_threads`, `suppress_trace`). It has no `fabric_dims` parameter.
+
 ### From Cerebras engineer (Slack conversation)
 
 - `SdkRuntime` creates host↔FPGA links when initialized. Each `runtime.run()` call

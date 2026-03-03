@@ -124,6 +124,18 @@ def main():
     print()
 
     # ---- Platform ----
+    # The platform object carries the full hardware fabric dimensions (762×1172 for WSE-3).
+    # SdkLayout.compile() reads these dimensions from the platform automatically, so no
+    # explicit --fabric-dims argument is needed here — unlike the SdkCompiler/cslc path
+    # (used by memcpy-based kernels) which requires passing --fabric-dims=762,1172 by hand.
+    #
+    # When cmaddr is None  → platform uses WSE-3 simulator defaults (full fabric).
+    # When cmaddr is set   → platform queries the actual CS system for its dimensions.
+    #
+    # The --height and --pe-length arguments only control:
+    #   • WHERE code is placed within the fabric (place() coordinates)
+    #   • The per-PE data dimensions (CSL param pe_length, data array sizes)
+    # They do NOT change the compiled fabric size; all 762×1172 PEs are always compiled.
     config   = SimfabConfig(dump_core=True)
     target   = SdkTarget.WSE3 if args.arch == 'wse3' else SdkTarget.WSE2
     platform = get_platform(args.cmaddr, config, target)

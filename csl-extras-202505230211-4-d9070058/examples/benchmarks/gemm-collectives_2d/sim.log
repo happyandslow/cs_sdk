@@ -3,31 +3,31 @@
 @0 dimX=11, dimY=6
 @0 Reading ELF file out/generated/default.elf
 @0 Reading ELF file out/generated/coord.elf
-@0 Reading ELF file out/bin/out_8_0.elf
-@0 Reading ELF file out/bin/out_3_0.elf
-@0 Reading ELF file out/bin/out_1_0.elf
-@0 Reading ELF file out/bin/out_5_0.elf
 @0 Reading ELF file out/bin/out_7_0.elf
-@0 Reading ELF file out/bin/out_0_0.elf
-@0 Reading ELF file out/bin/out_2_0.elf
 @0 Reading ELF file out/bin/out_6_0.elf
+@0 Reading ELF file out/bin/out_0_0.elf
+@0 Reading ELF file out/bin/out_1_0.elf
 @0 Reading ELF file out/bin/out_4_0.elf
-@0 Reading ELF file out/east/bin/out_3_0.elf
-@0 Reading ELF file out/east/bin/out_1_0.elf
-@0 Reading ELF file out/east/bin/out_5_0.elf
+@0 Reading ELF file out/bin/out_3_0.elf
+@0 Reading ELF file out/bin/out_8_0.elf
+@0 Reading ELF file out/bin/out_2_0.elf
+@0 Reading ELF file out/bin/out_5_0.elf
 @0 Reading ELF file out/east/bin/out_0_0.elf
-@0 Reading ELF file out/east/bin/out_2_0.elf
+@0 Reading ELF file out/east/bin/out_1_0.elf
 @0 Reading ELF file out/east/bin/out_4_0.elf
-@0 Reading ELF file out/west/bin/out_3_0.elf
-@0 Reading ELF file out/west/bin/out_1_0.elf
-@0 Reading ELF file out/west/bin/out_5_0.elf
+@0 Reading ELF file out/east/bin/out_3_0.elf
+@0 Reading ELF file out/east/bin/out_2_0.elf
+@0 Reading ELF file out/east/bin/out_5_0.elf
 @0 Reading ELF file out/west/bin/out_7_0.elf
-@0 Reading ELF file out/west/bin/out_0_0.elf
-@0 Reading ELF file out/west/bin/out_2_0.elf
 @0 Reading ELF file out/west/bin/out_6_0.elf
+@0 Reading ELF file out/west/bin/out_0_0.elf
+@0 Reading ELF file out/west/bin/out_1_0.elf
 @0 Reading ELF file out/west/bin/out_4_0.elf
+@0 Reading ELF file out/west/bin/out_3_0.elf
+@0 Reading ELF file out/west/bin/out_2_0.elf
+@0 Reading ELF file out/west/bin/out_5_0.elf
 @0 Reading ELF file out/generated/MEMCPY_XY_ROUTES.elf
-@0 Invocation key is: sim123A6CE147F750055FA4229E0915189E
+@0 Invocation key is: simADECDE67E629AB07F8501EF70DE5941E
 @0 Plan key is: plan34A3D4139F5F8BE0CD504134808A3823
 @0 SimTraceCtf, flags:  wavelets=0 landing=1 inst=1 switch_positions=0 stalls=1
 @0 P0.0 (nul) tile trace flag: inst_trace,landing,stalls
@@ -130,16 +130,17 @@
 @0 LS8 (nul) tile trace flag: inst_trace,landing,stalls
 @0 LS9 (nul) tile trace flag: inst_trace,landing,stalls
 @0 LS10 (nul) tile trace flag: inst_trace,landing,stalls
-@0 Architecture is: FYN
+@0 Architecture is: SDR
 @0 Simtile is: hwtile
-@0 Sim stats: config-time=0.23, nodes=1, threads=5
+@0 Sim stats: config-time=0.03, nodes=1, threads=5
 @0 Sim stats: tiles=100, simulated_tiles=44, hwtile=40, iotile=4, nultile=56
-@82722 Request to asynchronously stop simulation
-@82724 Stopping due to user request
-@82724 518 cycles since an instruction was executed, 563 cycles since a wavelet landed
-@82724 Simulation used 263.79 seconds, init-time=1.07, total-time=264.86, cycles=82724, cyc/sec=313.60, tile-cyc/sec=13798.32, tile-cyc/sec-thread=2759.66
-@82724 CTF Stats: num_stalls_       =      8559236
-@82724 CTF Stats: num_wavelets      =       164989
-@82724 CTF Stats: num_inst_dispatch =       720336
-@82724 CTF Stats: num_inst_pipe     =      1648975
-@82724 CTF Stats: num_switch_pos    =            0
+@109191 Request to asynchronously stop simulation
+@109191 Request to asynchronously stop simulation
+@109193 Stopping due to user request
+@109193 17909 cycles since an instruction was executed, 17952 cycles since a wavelet landed
+@109193 Simulation used 12.38 seconds, init-time=0.03, total-time=12.41, cycles=109193, cyc/sec=8822.13, tile-cyc/sec=388173.87, tile-cyc/sec-thread=77634.77
+@109193 CTF Stats: num_stalls_       =            0
+@109193 CTF Stats: num_wavelets      =       164989
+@109193 CTF Stats: num_inst_dispatch =       728533
+@109193 CTF Stats: num_inst_pipe     =      2639534
+@109193 CTF Stats: num_switch_pos    =            0
