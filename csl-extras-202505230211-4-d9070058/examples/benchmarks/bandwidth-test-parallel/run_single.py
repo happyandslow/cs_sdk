@@ -15,6 +15,7 @@ Host-side wall-clock timing measures round-trip (H2D + D2H) bandwidth.
 """
 
 import argparse
+import json
 import time
 
 import numpy as np
@@ -108,7 +109,18 @@ def main():
     )
     parser.add_argument(
         '--name', default='out',
-        help='Output artifact prefix (default: out)'
+        help='Output artifact prefix / directory (default: out). '
+             'Used as artifact path in --run-only mode; pass "." when running inside the appliance.'
+    )
+    parser.add_argument(
+        '--compile-only', action='store_true',
+        help='Compile the layout and save artifact path to artifact_path.json, then exit. '
+             'Use this to prepare the artifact before launching via run_launcher.py.'
+    )
+    parser.add_argument(
+        '--run-only', action='store_true',
+        help='Skip compilation; load artifact from --name (or "." on appliance). '
+             'Requires a prior --compile-only run or a staged artifact directory.'
     )
     args = parser.parse_args()
 
@@ -124,32 +136,62 @@ def main():
     print()
 
     # ---- Platform ----
-    # The platform object carries the full hardware fabric dimensions (762×1172 for WSE-3).
+    # The platform object carries the full hardware fabric dimensions (762x1172 for WSE-3).
     # SdkLayout.compile() reads these dimensions from the platform automatically, so no
-    # explicit --fabric-dims argument is needed here — unlike the SdkCompiler/cslc path
+    # explicit --fabric-dims argument is needed here -- unlike the SdkCompiler/cslc path
     # (used by memcpy-based kernels) which requires passing --fabric-dims=762,1172 by hand.
     #
-    # When cmaddr is None  → platform uses WSE-3 simulator defaults (full fabric).
-    # When cmaddr is set   → platform queries the actual CS system for its dimensions.
+    # When cmaddr is None  -> platform uses WSE-3 simulator defaults (full fabric).
+    # When cmaddr is set   -> platform queries the actual CS system for its dimensions.
     #
     # The --height and --pe-length arguments only control:
-    #   • WHERE code is placed within the fabric (place() coordinates)
-    #   • The per-PE data dimensions (CSL param pe_length, data array sizes)
-    # They do NOT change the compiled fabric size; all 762×1172 PEs are always compiled.
+    #   * WHERE code is placed within the fabric (place() coordinates)
+    #   * The per-PE data dimensions (CSL param pe_length, data array sizes)
+    # They do NOT change the compiled fabric size; all 762x1172 PEs are always compiled.
+    #
+    # In --compile-only mode we compile locally (cmaddr=None) even when the final run
+    # targets hardware, because the fabric dimensions are the same and no hardware
+    # connection is needed at compile time.
+    compile_cmaddr = None if args.compile_only else args.cmaddr
     config   = SimfabConfig(dump_core=True)
     target   = SdkTarget.WSE3 if args.arch == 'wse3' else SdkTarget.WSE2
-    platform = get_platform(args.cmaddr, config, target)
+    platform = get_platform(compile_cmaddr, config, target)
 
-    # ---- Compile ----
-    print("Building and compiling layout ...")
-    layout, h2d_stream, d2h_stream = build_layout(platform, H, pe_length)
-    t_compile_start = time.perf_counter()
-    artifacts = layout.compile(out_prefix=args.name)
-    t_compile_end = time.perf_counter()
-    print(f"Compilation done in {(t_compile_end - t_compile_start):.1f} s  ->  {artifacts}")
-    print()
+    # ---- Compile or load artifact ----
+    if args.run_only:
+        # Skip compilation; artifact directory was prepared by a prior --compile-only run.
+        # On the appliance, SdkLauncher sets the working directory to the extracted artifact,
+        # so --name . (the default passed by run_launcher.py) points to the current directory.
+        artifacts = args.name
+        print(f"Skipping compilation; using artifact at '{artifacts}'")
+        print()
+        # Rebuild layout (no compile) to obtain the h2d/d2h stream name handles.
+        # create_input/output_stream() assigns names during layout construction, before compile.
+        _, h2d_stream, d2h_stream = build_layout(platform, H, pe_length)
+    else:
+        print("Building and compiling layout ...")
+        layout, h2d_stream, d2h_stream = build_layout(platform, H, pe_length)
+        t_compile_start = time.perf_counter()
+        artifacts = layout.compile(out_prefix=args.name)
+        t_compile_end = time.perf_counter()
+        print(f"Compilation done in {(t_compile_end - t_compile_start):.1f} s  ->  {artifacts}")
+        print()
+
+        if args.compile_only:
+            # Save artifact path for use by run_launcher.py, then exit.
+            artifact_json = 'artifact_path.json'
+            with open(artifact_json, 'w', encoding='utf-8') as f:
+                json.dump({'artifact_path': artifacts}, f)
+            print(f"Artifact path saved to {artifact_json}")
+            print("COMPILE ONLY: EXIT")
+            return
 
     # ---- Runtime ----
+    # In --run-only mode the platform was created without cmaddr above for
+    # compatibility; recreate it now with the real cmaddr to connect to hardware.
+    if args.run_only:
+        platform = get_platform(args.cmaddr, config, target)
+
     runtime = SdkRuntime(artifacts, platform, memcpy_required=False)
     runtime.load()
     runtime.run()

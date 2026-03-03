@@ -42,6 +42,8 @@ full round-trip (H2D + D2H) wall-clock time.
 
 ## Quick Start
 
+### Simulator
+
 ```bash
 cd examples/benchmarks/bandwidth-test-parallel
 
@@ -55,9 +57,20 @@ cs_python run_single.py --height 8 --pe-length 1024
 bash bandwidth_test.sh
 ```
 
-For hardware (CS system):
+### CS Appliance (two-step workflow)
+
+Compilation and execution are split because the SdkLauncher submits the run
+to the appliance while compilation happens locally (no hardware connection needed
+at compile time):
+
 ```bash
-cs_python run_single.py --height 8 --pe-length 2048 --cmaddr <IP:PORT>
+# Step 1: compile locally (produces artifact_path.json)
+cs_python run_single.py --compile-only --height 8 --pe-length 1024 --arch wse3
+
+# Step 2: launch on appliance via SdkLauncher
+python run_launcher.py --height 8 --pe-length 1024 --arch wse3
+
+# Or run the full test suite against the appliance
 bash bandwidth_test.sh --cmaddr <IP:PORT>
 ```
 
@@ -69,11 +82,12 @@ bash bandwidth_test.sh --cmaddr <IP:PORT>
 bandwidth-test-parallel/
 ├── DESIGN.md                  Design document and architecture notes
 ├── README.md                  This file
-├── run_single.py              Single-host run script
+├── run_single.py              Compile + run script (simulator or appliance --run-only)
+├── run_launcher.py            Appliance launcher (SdkLauncher; call after --compile-only)
 ├── demux.py                   Demux helper (get_demux_adaptor, get_b_demux)
 ├── mux.py                     Mux helper (get_mux)
 ├── core.py                    Loopback core helper (get_loopback_core)
-├── bandwidth_test.sh          Test suite script
+├── bandwidth_test.sh          Test suite (auto-selects simulator vs appliance workflow)
 └── src/
     ├── bw_loopback_kernel.csl Per-PE loopback: recv pe_length wavelets → send
     ├── demux_adaptor.csl      1×1 adaptor: forward + inject SWITCH_ADV
@@ -85,14 +99,29 @@ bandwidth-test-parallel/
 
 ## Parameters
 
+### `run_single.py`
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--height` / `-H` | 4 | Number of PEs in the column |
 | `--pe-length` / `-N` | 1024 | f32 elements per PE (max ~4096) |
 | `--arch` | `wse3` | Target architecture (`wse2` or `wse3`) |
-| `--cmaddr` | *(simulator)* | `IP:port` for CS system |
+| `--cmaddr` | *(simulator)* | `IP:port` for CS system (used in `--run-only` mode) |
 | `--verify` | off | Check loopback correctness after run |
-| `--name` | `out` | Compiled artifact directory prefix |
+| `--name` | `out` | Artifact directory prefix; pass `.` in appliance `--run-only` |
+| `--compile-only` | off | Compile layout, write `artifact_path.json`, exit |
+| `--run-only` | off | Skip compilation; load artifact from `--name` directory |
+
+### `run_launcher.py`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--height` / `-H` | 4 | Must match the `--compile-only` run |
+| `--pe-length` / `-N` | 1024 | Must match the `--compile-only` run |
+| `--arch` | `wse3` | Target architecture |
+| `--verify` | off | Pass `--verify` to run_single.py on appliance |
+| `--simulator` | off | Run in simulator mode inside the appliance |
+| `--artifact-path` | `artifact_path.json` | Path to artifact JSON from `--compile-only` |
 
 ---
 
