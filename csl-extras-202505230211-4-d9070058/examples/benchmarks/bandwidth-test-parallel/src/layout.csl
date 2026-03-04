@@ -1,0 +1,35 @@
+// Layout for the SdkCompiler (memcpy) path of bandwidth-test-parallel.
+//
+// Topology: 1 column × height rows of loopback PEs.
+//   host --[memcpy H2D]--> buf[pe_length] --[memcpy D2H]--> host
+//
+// Compile flags expected by compile_single.py:
+//   --arch wse3
+//   --fabric-dims=<W>,<H+2>   (W=8 for memcpy + 1 core column)
+//   --fabric-offsets=4,1
+//   --params=height:<H>,pe_length:<N>
+//   --memcpy --channels=1
+
+param height:    i16;
+param pe_length: i16;
+
+const memcpy = @import_module("<memcpy/get_params>", .{
+  .width  = 1,
+  .height = height,
+});
+
+layout {
+  @set_rectangle(1, height);
+
+  var py: i16 = 0;
+  while (py < height) : (py += 1) {
+    const memcpyParams = memcpy.get_params(0);
+    @set_tile_code(0, py, "bw_kernel.csl", .{
+      .pe_length    = @as(u16, pe_length),
+      .memcpyParams = memcpyParams,
+    });
+  }
+
+  // Export the loopback buffer symbol so the host can H2D/D2H to it.
+  @export_name("buf", [*]f32, true);
+}
