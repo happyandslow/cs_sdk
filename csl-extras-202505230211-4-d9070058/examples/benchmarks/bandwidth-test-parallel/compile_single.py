@@ -55,10 +55,6 @@ def main():
         help="Target WSE architecture (default: wse3)"
     )
     parser.add_argument(
-        "--name", default="out",
-        help="Output artifact name prefix (default: out)"
-    )
-    parser.add_argument(
         "--output-dir", default=".",
         help="Directory where artifact_path.json is written (default: .)"
     )
@@ -81,7 +77,7 @@ def main():
         f"--fabric-dims={fabric_dims} "
         f"--fabric-offsets={fabric_offset_x},{fabric_offset_y} "
         f"--params=height:{H},pe_length:{N} "
-        f"-o={args.name} "
+        f"-o=latest "
         f"--memcpy "
         f"--channels=1"
     )
