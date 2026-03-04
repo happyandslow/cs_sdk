@@ -67,40 +67,40 @@ from mux   import get_mux
 # Layout construction
 # ---------------------------------------------------------------------------
 
-def build_layout(platform, height, pe_length):
+def build_layout(platform, width, height, pe_length):
     """Construct the SdkLayout and return (layout, h2d_stream, d2h_stream)."""
     layout = SdkLayout(platform)
 
     # ---- Input adaptor (1×1) ----
-    # Receives the full H*pe_length wavelet stream from the host and injects
+    # Receives the full W*H*pe_length wavelet stream from the host and injects
     # SWITCH_ADV control wavelets between each pe_length-sized batch.
     (h2d_port, adaptor_out_port, adaptor) = get_demux_adaptor(
-        layout, 'in_adaptor', pe_length, height
+        layout, 'in_adaptor', pe_length, width * height
     )
     adaptor.place(1, 0)
 
-    # ---- Vertical demux (1×height) ----
+    # ---- Vertical demux (width×height) ----
     # Distributes batches: PE[0] gets first pe_length, PE[1] next, etc.
     (demux_in_port, demux_out_port, demux) = get_b_demux(
-        layout, 'in_demux', pe_length, 1, height
+        layout, 'in_demux', pe_length, width, height
     )
     demux.place(2, 0)
     layout.connect(adaptor_out_port, demux_in_port)
 
-    # ---- Loopback core (1×height) ----
+    # ---- Loopback core (width×height) ----
     # Each PE receives pe_length wavelets, stores them, sends them back.
     (core_in_port, core_out_port, core) = get_loopback_core(
-        layout, 'core', pe_length, height
+        layout, 'core', pe_length, width, height
     )
-    core.place(3, 0)
+    core.place(2 + width, 0)
     layout.connect(demux_out_port, core_in_port)
 
-    # ---- Mux (1×height) ----
+    # ---- Mux (width×height) ----
     # Serialises results from all PEs into a single output stream.
     (mux_in_port, d2h_port, mux) = get_mux(
-        layout, 'out_mux', pe_length, 1, height
+        layout, 'out_mux', pe_length, width, height
     )
-    mux.place(4, 0)
+    mux.place(2 + 2 * width, 0)
     layout.connect(core_out_port, mux_in_port)
 
     # ---- Host I/O streams ----
@@ -126,8 +126,12 @@ def main():
         description='Direct-link loopback bandwidth test (single-host)'
     )
     parser.add_argument(
+        '--width', '-W', type=int, default=1,
+        help='Number of PE columns (default: 1)'
+    )
+    parser.add_argument(
         '--height', '-H', type=int, default=4,
-        help='Number of PEs in the column (default: 4)'
+        help='Number of PE rows (default: 4)'
     )
     parser.add_argument(
         '--pe-length', '-N', type=int, default=1024,
@@ -166,12 +170,21 @@ def main():
     )
     args = parser.parse_args()
 
+    W         = args.width
     H         = args.height
     pe_length = args.pe_length
-    total     = H * pe_length
+    total     = W * H * pe_length
+
+    if W != 1:
+        raise ValueError(
+            f"--width={W} not yet supported in direct-link mode. "
+            "Width > 1 requires multiple independent streams (one per column). "
+            "Use --width=1 for now."
+        )
 
     print(f"=== Direct-Link Loopback Bandwidth Test ===")
     print(f"Architecture : {args.arch.upper()}")
+    print(f"Width  (PEs) : {W}")
     print(f"Height (PEs) : {H}")
     print(f"PE length    : {pe_length} f32")
     print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
@@ -200,13 +213,13 @@ def main():
         print()
         # Rebuild layout (no compile) to obtain the h2d/d2h stream name handles.
         # create_input/output_stream() assigns names during layout construction.
-        _, h2d_stream, d2h_stream = build_layout(platform, H, pe_length)
+        _, h2d_stream, d2h_stream = build_layout(platform, W, H, pe_length)
         # Load artifact from directory + port map
         port_map = os.path.join(artifact_dir, 'out_port_map.json')
         artifacts = SdkCompileArtifacts(artifact_dir).add_port_mapping(port_map)
     else:
         print("Building and compiling layout ...")
-        layout, h2d_stream, d2h_stream = build_layout(platform, H, pe_length)
+        layout, h2d_stream, d2h_stream = build_layout(platform, W, H, pe_length)
         artifact_dir = args.name
         os.makedirs(artifact_dir, exist_ok=True)
         t_compile_start = time.perf_counter()

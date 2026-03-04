@@ -50,6 +50,12 @@ def main():
              "to the extracted artifact directory. (default: latest)"
     )
     parser.add_argument(
+        "--sync", action="store_true",
+        help="Use blocking (sync) memcpy transfers instead of nonblocking (async). "
+             "Async allows the runtime to aggregate multiple requests into fewer TCP "
+             "transactions, amortizing the ~200us TCP overhead."
+    )
+    parser.add_argument(
         "--verify", action="store_true",
         help="Verify loopback: check received data matches sent data"
     )
@@ -66,6 +72,7 @@ def main():
     print(f"Height (PEs) : {H}")
     print(f"PE length    : {pe_length} f32")
     print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
+    print(f"Transfer     : {'sync (blocking)' if args.sync else 'async (nonblocking)'}")
     print()
 
     # SdkLauncher extracts the compiled artifact and creates a symlink named
@@ -79,6 +86,8 @@ def main():
     data_h2d = np.arange(total, dtype=np.float32)
     data_d2h = np.zeros(total, dtype=np.float32)
 
+    nonblock = not args.sync
+
     print("Running bandwidth measurement ...")
     t0 = time.perf_counter()
     runner.memcpy_h2d(
@@ -87,7 +96,7 @@ def main():
         streaming=False,
         data_type=MemcpyDataType.MEMCPY_32BIT,
         order=MemcpyOrder.ROW_MAJOR,
-        nonblock=True,
+        nonblock=nonblock,
     )
     runner.memcpy_d2h(
         data_d2h, symbol_buf,
@@ -95,7 +104,7 @@ def main():
         streaming=False,
         data_type=MemcpyDataType.MEMCPY_32BIT,
         order=MemcpyOrder.ROW_MAJOR,
-        nonblock=True,
+        nonblock=nonblock,
     )
     runner.stop()
     t1 = time.perf_counter()

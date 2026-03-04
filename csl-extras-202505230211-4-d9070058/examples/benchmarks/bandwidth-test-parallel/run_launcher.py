@@ -52,6 +52,10 @@ def main():
         help='Target WSE architecture (default: wse3)'
     )
     parser.add_argument(
+        '--sync', action='store_true',
+        help='Use blocking (sync) memcpy transfers instead of async'
+    )
+    parser.add_argument(
         '--verify', action='store_true',
         help='Verify loopback: check received data matches sent data'
     )
@@ -95,6 +99,7 @@ def main():
     print()
 
     verify_flag = '--verify' if args.verify else ''
+    sync_flag   = '--sync'   if args.sync   else ''
 
     if is_sdklayout:
         # Path A: SdkLayout artifact (local directory).
@@ -104,6 +109,7 @@ def main():
             f"cs_python run_single.py "
             f"--run-only "
             f"--name . "
+            f"--width {args.width} "
             f"--height {args.height} "
             f"--pe-length {args.pe_length} "
             f"--arch {args.arch} "
@@ -133,6 +139,7 @@ def main():
             f"--height {args.height} "
             f"--pe-length {args.pe_length} "
             f"--latestlink latest "
+            f"{sync_flag} "
             f"{verify_flag} "
             f"--cmaddr %CMADDR%"
         ).strip()

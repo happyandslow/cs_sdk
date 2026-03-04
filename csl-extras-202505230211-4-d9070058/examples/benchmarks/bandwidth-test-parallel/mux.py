@@ -43,7 +43,7 @@ def get_mux(layout, name, batch_size, width, height):
     output_routes       = RoutingPosition().set_input([Route.RAMP])
     forward_port_routes = RoutingPosition().set_input([Route.SOUTH])
 
-    size     = batch_size * height
+    size     = batch_size * width * height
     in_port  = mux.create_input_port( in_color,  Edge.LEFT, [input_routes],                         size)
     out_port = mux.create_output_port(out_color, Edge.TOP,  [output_routes, forward_port_routes],   size)
     return (in_port, out_port, mux)

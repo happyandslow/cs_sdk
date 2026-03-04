@@ -7,9 +7,10 @@
 #     connect to it automatically via environment variables or config)
 #
 # Usage:
-#   bash run_appliance.sh                                # defaults: W=1 H=1024 N=4096 C=1 wse3
-#   bash run_appliance.sh 64 1024 4096 16 wse3           # W H N channels arch
-#   bash run_appliance.sh 64 1024 4096 16 wse3 --verify  # with loopback verification
+#   bash run_appliance.sh                                     # defaults: W=1 H=1024 N=4096 C=1 wse3
+#   bash run_appliance.sh 64 1024 4096 16 wse3                # W H N channels arch
+#   bash run_appliance.sh 64 1024 4096 16 wse3 --verify       # with loopback verification
+#   bash run_appliance.sh 64 1024 4096 16 wse3 "--sync --verify"  # sync + verify
 #
 # The script runs two steps:
 #   1. compile_single.py  — SdkCompiler: compiles src/layout.csl on the appliance
