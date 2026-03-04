@@ -9,7 +9,7 @@ It uses the sdkruntimepybind memcpy API (available in cs_python on the
 appliance) to perform H2D → loopback → D2H and report bandwidth.
 
 Usage (called automatically by run_launcher.py, not directly by the user):
-  cs_python run_hw.py --height H --pe-length N --cmaddr IP:PORT [--verify]
+  cs_python run_hw.py --height H --pe-length N --latestlink latest --cmaddr IP:PORT [--verify]
 """
 
 import argparse
@@ -40,6 +40,12 @@ def main():
         help="IP:port of the CS appliance"
     )
     parser.add_argument(
+        "--latestlink", default="latest",
+        help="Directory (or symlink) containing the compiled ELF files. "
+             "SdkLauncher creates a 'latest' symlink on the appliance pointing "
+             "to the extracted artifact directory. (default: latest)"
+    )
+    parser.add_argument(
         "--verify", action="store_true",
         help="Verify loopback: check received data matches sent data"
     )
@@ -48,6 +54,7 @@ def main():
     H         = args.height
     pe_length = args.pe_length
     total     = H * pe_length
+    artifact_dir = args.latestlink
 
     print(f"=== Direct-Link Loopback Bandwidth Test (memcpy path) ===")
     print(f"Height (PEs) : {H}")
@@ -55,8 +62,9 @@ def main():
     print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
     print()
 
-    # Working directory ('.') is the extracted artifact directory on the appliance.
-    runner = SdkRuntime(".", cmaddr=args.cmaddr)
+    # SdkLauncher extracts the compiled artifact and creates a symlink named
+    # `latest` (or whatever --latestlink specifies) pointing to the ELF directory.
+    runner = SdkRuntime(artifact_dir, cmaddr=args.cmaddr)
     symbol_buf = runner.get_id("buf")
 
     runner.load()

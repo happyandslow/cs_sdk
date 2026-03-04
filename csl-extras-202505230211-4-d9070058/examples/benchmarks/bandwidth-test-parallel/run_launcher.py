@@ -126,6 +126,7 @@ def main():
             f"cs_python run_hw.py "
             f"--height {args.height} "
             f"--pe-length {args.pe_length} "
+            f"--latestlink latest "
             f"{verify_flag} "
             f"--cmaddr %CMADDR%"
         ).strip()
