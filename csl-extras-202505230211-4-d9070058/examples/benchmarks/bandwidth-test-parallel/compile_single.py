@@ -43,12 +43,20 @@ def main():
         description="Compile bandwidth-test-parallel (memcpy path) using SdkCompiler"
     )
     parser.add_argument(
+        "--width", "-W", type=int, default=1,
+        help="Number of PE columns (default: 1)"
+    )
+    parser.add_argument(
         "--height", "-H", type=int, default=4,
-        help="Number of PEs in the column (default: 4)"
+        help="Number of PE rows (default: 4)"
     )
     parser.add_argument(
         "--pe-length", "-N", type=int, default=1024,
         help="Number of f32 elements per PE (default: 1024)"
+    )
+    parser.add_argument(
+        "--channels", "-C", type=int, default=1,
+        help="Number of memcpy I/O channels (default: 1, max: 16)"
     )
     parser.add_argument(
         "--arch", choices=["wse2", "wse3"], default="wse3",
@@ -60,14 +68,17 @@ def main():
     )
     args = parser.parse_args()
 
+    W = args.width
     H = args.height
     N = args.pe_length
+    C = args.channels
 
     # Fabric dimensions and offsets for the memcpy framework.
-    # core_fabric_offset_x = fabric_offset_x(1) + 3 west memcpy columns = 4
-    # core_fabric_offset_y = fabric_offset_y(1)
-    # min_fabric_width  = 4 + 1 (core width) + 2 (east memcpy) + 1 = 8
+    # core_fabric_offset_x = 1 base + 3 west memcpy columns = 4
+    # core_fabric_offset_y = 1
+    # min_fabric_width  = 4 + W (core) + 2 (east memcpy) + 1 = W + 7
     # min_fabric_height = 1 + H + 1 = H + 2
+    # We use the full WSE fabric dims — always large enough for any W, H.
     fabric_offset_x = 4   # 1 base + 3 west memcpy
     fabric_offset_y = 1
     fabric_dims = WSE3_FABRIC_DIMS if args.arch == "wse3" else WSE2_FABRIC_DIMS
@@ -76,16 +87,18 @@ def main():
         f"--arch {args.arch} "
         f"--fabric-dims={fabric_dims} "
         f"--fabric-offsets={fabric_offset_x},{fabric_offset_y} "
-        f"--params=height:{H},pe_length:{N} "
+        f"--params=width:{W},height:{H},pe_length:{N} "
         f"-o=latest "
         f"--memcpy "
-        f"--channels=1"
+        f"--channels={C}"
     )
 
     print(f"=== bandwidth-test-parallel: SdkCompiler Compile ===")
     print(f"Architecture : {args.arch.upper()}")
+    print(f"Width  (PEs) : {W}")
     print(f"Height (PEs) : {H}")
     print(f"PE length    : {N} f32")
+    print(f"Channels     : {C}")
     print(f"Fabric dims  : {fabric_dims}")
     print(f"Compile args : {compile_args}")
     print()

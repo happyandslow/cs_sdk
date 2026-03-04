@@ -28,8 +28,12 @@ def main():
         description="Appliance-side memcpy loopback runtime (compile_single.py path)"
     )
     parser.add_argument(
+        "--width", "-W", type=int, default=1,
+        help="Number of PE columns (default: 1)"
+    )
+    parser.add_argument(
         "--height", "-H", type=int, required=True,
-        help="Number of PEs in the column"
+        help="Number of PE rows"
     )
     parser.add_argument(
         "--pe-length", "-N", type=int, required=True,
@@ -51,12 +55,14 @@ def main():
     )
     args = parser.parse_args()
 
+    W         = args.width
     H         = args.height
     pe_length = args.pe_length
-    total     = H * pe_length
+    total     = W * H * pe_length
     artifact_dir = args.latestlink
 
     print(f"=== Direct-Link Loopback Bandwidth Test (memcpy path) ===")
+    print(f"Width  (PEs) : {W}")
     print(f"Height (PEs) : {H}")
     print(f"PE length    : {pe_length} f32")
     print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
@@ -77,7 +83,7 @@ def main():
     t0 = time.perf_counter()
     runner.memcpy_h2d(
         symbol_buf, data_h2d,
-        0, 0, 1, H, pe_length,
+        0, 0, W, H, pe_length,
         streaming=False,
         data_type=MemcpyDataType.MEMCPY_32BIT,
         order=MemcpyOrder.ROW_MAJOR,
@@ -85,7 +91,7 @@ def main():
     )
     runner.memcpy_d2h(
         data_d2h, symbol_buf,
-        0, 0, 1, H, pe_length,
+        0, 0, W, H, pe_length,
         streaming=False,
         data_type=MemcpyDataType.MEMCPY_32BIT,
         order=MemcpyOrder.ROW_MAJOR,

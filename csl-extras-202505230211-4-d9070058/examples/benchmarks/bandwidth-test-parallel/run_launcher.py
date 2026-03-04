@@ -36,8 +36,12 @@ def main():
         description='Appliance launcher for bandwidth-test-parallel'
     )
     parser.add_argument(
+        '--width', '-W', type=int, default=1,
+        help='Number of PE columns (default: 1; must match compile step)'
+    )
+    parser.add_argument(
         '--height', '-H', type=int, default=4,
-        help='Number of PEs in the column (default: 4; must match compile step)'
+        help='Number of PE rows (default: 4; must match compile step)'
     )
     parser.add_argument(
         '--pe-length', '-N', type=int, default=1024,
@@ -83,6 +87,7 @@ def main():
     print(f"=== Appliance Launcher: bandwidth-test-parallel ===")
     print(f"Compile path : {path_label}")
     print(f"Artifact     : {artifact_path}")
+    print(f"Width  (PEs) : {args.width}")
     print(f"Height (PEs) : {args.height}")
     print(f"PE length    : {args.pe_length} f32")
     print(f"Arch         : {args.arch.upper()}")
@@ -124,6 +129,7 @@ def main():
         # SdkLauncher resolves the hash and runs the artifact on the appliance.
         run_cmd = (
             f"cs_python run_hw.py "
+            f"--width {args.width} "
             f"--height {args.height} "
             f"--pe-length {args.pe_length} "
             f"--latestlink latest "
