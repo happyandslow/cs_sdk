@@ -2,23 +2,27 @@
 """
 Appliance launcher for the bandwidth-test-parallel benchmark.
 
-Supports two compile paths, auto-detected from artifact_path.json:
+Two paths:
 
-  Path A — SdkLayout (direct-link, cs_python required for compilation):
-    Compile:  cs_python run_single.py --compile-only --height H --pe-length N --arch wse3
-    Launch:   python run_launcher.py  --height H --pe-length N --arch wse3
-    → stages run_single.py + helpers; calls cs_python run_single.py --run-only on appliance
+  Path A — SdkLayout (direct-link):
+    python run_launcher.py --direct-link --height H --pe-length N --arch wse3
+    → stages src/ + Python scripts to the appliance worker; runs
+      cs_python run_single.py --cmaddr %CMADDR% (compile+run in one step).
+    Compilation MUST happen on the appliance because SdkLayout gets fabric
+    dimensions (762×1172 for WSE-3) from the platform object, which requires
+    get_system(cmaddr).  Local compilation with get_simulator() produces
+    minimal-fabric ELFs that fail on hardware.
 
-  Path B — SdkCompiler (memcpy, no cs_python required for compilation):
+  Path B — SdkCompiler (memcpy):
     Compile:  python compile_single.py --height H --pe-length N --arch wse3
     Launch:   python run_launcher.py   --height H --pe-length N --arch wse3
-    → stages run_hw.py; calls cs_python run_hw.py on appliance
+    → stages run_hw.py; calls cs_python run_hw.py on appliance.
+    SdkCompiler passes --fabric-dims=762,1172 explicitly to cslc, so
+    compilation happens remotely with correct fabric dimensions.
 
-Detection:
-  If artifact_path from artifact_path.json is an existing local directory
-  → Path A (SdkLayout artifact, local directory uploaded by SdkLauncher).
-  Otherwise (appliance artifact hash from SdkCompiler)
-  → Path B (memcpy artifact, hash resolved by SdkLauncher on appliance).
+Detection (when --direct-link is not used):
+  Reads artifact_path.json from a prior compile step.
+  If artifact_path is an appliance hash → Path B.
 """
 
 import argparse
@@ -64,33 +68,45 @@ def main():
         help='Run inside the appliance in simulator mode (default: real hardware)'
     )
     parser.add_argument(
+        '--direct-link', action='store_true',
+        help='Use SdkLayout direct-link path (Path A). '
+             'Stages source + scripts to the appliance; compiles and runs there. '
+             'No artifact_path.json needed.'
+    )
+    parser.add_argument(
         '--artifact-path', default=ARTIFACT_JSON,
-        help=f'Path to artifact_path.json from compile step (default: {ARTIFACT_JSON})'
+        help=f'Path to artifact_path.json from compile step (default: {ARTIFACT_JSON}). '
+             'Only used for Path B (SdkCompiler/memcpy). Ignored with --direct-link.'
     )
     args = parser.parse_args()
 
-    # ---- Read compiled artifact path ----
-    if not os.path.exists(args.artifact_path):
-        raise FileNotFoundError(
-            f"Artifact path file not found: {args.artifact_path}\n"
-            "Run a compile step first:\n"
-            f"  Path A (SdkLayout):   cs_python run_single.py --compile-only "
-            f"--height {args.height} --pe-length {args.pe_length} --arch {args.arch}\n"
-            f"  Path B (SdkCompiler): python compile_single.py "
-            f"--height {args.height} --pe-length {args.pe_length} --arch {args.arch}"
-        )
-    with open(args.artifact_path, encoding='utf-8') as f:
-        artifact_path = json.load(f)['artifact_path']
+    # ---- Determine path ----
+    if args.direct_link:
+        is_sdklayout = True
+        artifact_path = None
+    else:
+        if not os.path.exists(args.artifact_path):
+            raise FileNotFoundError(
+                f"Artifact path file not found: {args.artifact_path}\n"
+                "Options:\n"
+                f"  Path A (direct-link): python run_launcher.py --direct-link "
+                f"--height {args.height} --pe-length {args.pe_length} --arch {args.arch}\n"
+                f"  Path B (SdkCompiler): python compile_single.py "
+                f"--height {args.height} --pe-length {args.pe_length} --arch {args.arch}\n"
+                f"                        python run_launcher.py "
+                f"--height {args.height} --pe-length {args.pe_length} --arch {args.arch}"
+            )
+        with open(args.artifact_path, encoding='utf-8') as f:
+            artifact_path = json.load(f)['artifact_path']
 
-    # ---- Auto-detect compile path ----
-    # Path A: artifact_path is a local directory (SdkLayout produced it locally).
-    # Path B: artifact_path is an appliance hash (SdkCompiler produced it remotely).
-    is_sdklayout = os.path.isdir(artifact_path)
     path_label = "SdkLayout (direct-link)" if is_sdklayout else "SdkCompiler (memcpy)"
 
     print(f"=== Appliance Launcher: bandwidth-test-parallel ===")
     print(f"Compile path : {path_label}")
-    print(f"Artifact     : {artifact_path}")
+    if artifact_path is not None:
+        print(f"Artifact     : {artifact_path}")
+    else:
+        print(f"Artifact     : (compile+run on appliance worker)")
     print(f"Width  (PEs) : {args.width}")
     print(f"Height (PEs) : {args.height}")
     print(f"PE length    : {args.pe_length} f32")
@@ -102,31 +118,40 @@ def main():
     sync_flag   = '--sync'   if args.sync   else ''
 
     if is_sdklayout:
-        # Path A: SdkLayout artifact (local directory).
-        # The appliance side uses run_single.py --run-only with the SdkLayout stream API.
-        # SdkLauncher uploads the entire artifact directory to the appliance.
+        # Path A: SdkLayout (direct-link).
+        # Compile AND run on the appliance worker in one step.
+        # SdkLayout.compile() gets fabric dims from the platform object;
+        # get_system(%CMADDR%) on the appliance provides the full WSE-3
+        # fabric (762×1172).  Local compilation with get_simulator() would
+        # produce a minimal-fabric ELF that fails on hardware.
+        #
+        # Stage source files + Python scripts for the appliance worker.
+        import tarfile
+        staging_tar = 'dl_staging.tar.gz'
+        with tarfile.open(staging_tar, 'w:gz') as tar:
+            tar.add('src')
+            tar.add('run_single.py')
+            tar.add('demux.py')
+            tar.add('mux.py')
+            tar.add('core.py')
+
         run_cmd = (
             f"cs_python run_single.py "
-            f"--run-only "
-            f"--name . "
             f"--width {args.width} "
             f"--height {args.height} "
             f"--pe-length {args.pe_length} "
             f"--arch {args.arch} "
+            f"{sync_flag} "
             f"{verify_flag} "
             f"--cmaddr %CMADDR%"
         ).strip()
 
-        print(f"Staging files and submitting to appliance ...")
+        print(f"Staging source + scripts to appliance (compile+run) ...")
         print(f"Run command: {run_cmd}")
         print()
 
-        with SdkLauncher(artifact_path, simulator=args.simulator,
+        with SdkLauncher(staging_tar, simulator=args.simulator,
                          disable_version_check=True) as launcher:
-            launcher.stage('run_single.py')
-            launcher.stage('demux.py')
-            launcher.stage('mux.py')
-            launcher.stage('core.py')
             response = launcher.run(run_cmd)
 
     else:
