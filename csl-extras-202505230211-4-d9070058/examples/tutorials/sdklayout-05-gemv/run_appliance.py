@@ -77,6 +77,10 @@ def main():
 
     with SdkLauncher(staging_tar, simulator=args.simulator,
                      disable_version_check=True) as launcher:
+        response = launcher.run(
+            "ls -l"
+        )
+        print("Test response: ", response)
         response = launcher.run(run_cmd)
 
     print("Appliance response:")
