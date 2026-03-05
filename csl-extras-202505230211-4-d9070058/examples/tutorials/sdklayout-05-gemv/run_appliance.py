@@ -2,8 +2,8 @@
 """
 Appliance launcher for the sdklayout-05-gemv tutorial.
 
-Packages run.py + helper scripts + CSL source files into a tarball,
-uploads to the appliance worker via SdkLauncher, and runs:
+Creates a staging directory with run.py + helper scripts + CSL source files,
+passes it to SdkLauncher (which tars and uploads it), then runs:
     cs_python run.py --cmaddr %CMADDR% --arch <arch>
 
 On the worker, get_platform(cmaddr) connects to the CS system and
@@ -18,7 +18,7 @@ Usage:
 
 import argparse
 import os
-import tarfile
+import shutil
 
 from cerebras.sdk.client import SdkLauncher
 
@@ -56,11 +56,15 @@ def main():
         if not os.path.exists(f):
             raise FileNotFoundError(f"Required file not found: {f}")
 
-    # Create tarball
-    staging_tar = 'gemv_staging.tar.gz'
-    with tarfile.open(staging_tar, 'w:gz') as tar:
-        for f in files_to_stage:
-            tar.add(f)
+    # Create a staging directory with all files.
+    # SdkLauncher(dir) tars up the directory contents and extracts them
+    # on the worker — the worker's working directory will contain the files.
+    staging_dir = 'gemv_staging'
+    if os.path.exists(staging_dir):
+        shutil.rmtree(staging_dir)
+    os.makedirs(staging_dir)
+    for f in files_to_stage:
+        shutil.copy2(f, staging_dir)
 
     run_cmd = (
         f"cs_python run.py "
@@ -75,12 +79,11 @@ def main():
     print(f"Run command  : {run_cmd}")
     print()
 
-    with SdkLauncher(staging_tar, simulator=args.simulator,
+    with SdkLauncher(staging_dir, simulator=args.simulator,
                      disable_version_check=True) as launcher:
-        response = launcher.run(
-            "ls -l"
-        )
-        print("Test response: ", response)
+        response = launcher.run("ls -la")
+        print("Appliance response:")
+        print(response)
         response = launcher.run(run_cmd)
 
     print("Appliance response:")
