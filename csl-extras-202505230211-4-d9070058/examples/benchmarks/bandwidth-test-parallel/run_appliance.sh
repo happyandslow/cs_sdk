@@ -7,13 +7,23 @@
 #     connect to it automatically via environment variables or config)
 #
 # Usage:
-#   bash run_appliance.sh                                     # defaults: W=1 H=1024 N=4096 C=1 wse3
-#   bash run_appliance.sh 64 1024 4096 16 wse3                # W H N channels arch
-#   bash run_appliance.sh 64 1024 4096 16 wse3 --verify       # with loopback verification
-#   bash run_appliance.sh 64 1024 4096 16 wse3 "--sync --verify"  # sync + verify
+#   bash run_appliance.sh                                                 # defaults
+#   bash run_appliance.sh 720 720 512 16 4 4 wse3 5                      # max BW config
+#   bash run_appliance.sh 720 720 512 16 4 4 wse3 5 "--d2h"              # D2H direction
+#   bash run_appliance.sh 720 720 512 16 4 4 wse3 5 "--verify"           # with verification
+#   bash run_appliance.sh 720 720 512 16 4 4 wse3 5 "--sync --verify"    # sync + verify
+#
+# Parameters for maximum bandwidth:
+#   W=720        wide rectangle to leverage multiple channels
+#   H=720        tall rectangle for more data
+#   N=512        elements per PE
+#   C=16         maximum I/O channels
+#   WB=4         west buffer columns (hides H2D latency)
+#   EB=4         east buffer columns (hides D2H latency)
+#   L=5          loop count (amortizes TCP overhead)
 #
 # The script runs two steps:
-#   1. compile_single.py  — SdkCompiler: compiles src/layout.csl on the appliance
+#   1. compile_single.py  — SdkCompiler: compiles src/layout.csl with --fabric-dims=762,1172
 #   2. run_launcher.py    — SdkLauncher: stages run_hw.py, executes on appliance
 
 set -euo pipefail
@@ -25,27 +35,33 @@ W="${1:-1}"           # width (number of PE columns)
 H="${2:-1024}"        # height (number of PE rows)
 N="${3:-4096}"        # pe_length (f32 elements per PE)
 CHANNELS="${4:-1}"    # number of I/O channels (1-16)
-ARCH="${5:-wse3}"     # target architecture
-EXTRA="${6:-}"        # optional extra flag, e.g. --verify
+WB="${5:-0}"          # west buffer columns
+EB="${6:-0}"          # east buffer columns
+ARCH="${7:-wse3}"     # target architecture
+LOOP="${8:-1}"        # loop count
+EXTRA="${9:-}"        # optional extra flags, e.g. --verify, --d2h, --sync
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "============================================================"
 echo " bandwidth-test-parallel  (appliance, memcpy path)"
-echo " arch=${ARCH}  width=${W}  height=${H}  pe_length=${N}  channels=${CHANNELS}"
+echo " arch=${ARCH}  W=${W}  H=${H}  N=${N}  channels=${CHANNELS}"
+echo " west_buf=${WB}  east_buf=${EB}  loop_count=${LOOP}"
 echo "============================================================"
 echo ""
 
 # ---------------------------------------------------------------------------- #
 # Step 1: Compile on the appliance using SdkCompiler (no cs_python needed)
 # ---------------------------------------------------------------------------- #
-echo "[COMPILE] python compile_single.py --width ${W} --height ${H} --pe-length ${N} --channels ${CHANNELS} --arch ${ARCH}"
+echo "[COMPILE] python compile_single.py --width ${W} --height ${H} --pe-length ${N} --channels ${CHANNELS} --width-west-buf ${WB} --width-east-buf ${EB} --arch ${ARCH}"
 python compile_single.py \
     --width "${W}" \
     --height "${H}" \
     --pe-length "${N}" \
     --channels "${CHANNELS}" \
+    --width-west-buf "${WB}" \
+    --width-east-buf "${EB}" \
     --arch "${ARCH}"
 
 echo ""
@@ -55,11 +71,12 @@ echo ""
 # ---------------------------------------------------------------------------- #
 # Step 2: Launch on the appliance using SdkLauncher
 # ---------------------------------------------------------------------------- #
-echo "[RUN] python run_launcher.py --width ${W} --height ${H} --pe-length ${N} --arch ${ARCH} ${EXTRA}"
+echo "[RUN] python run_launcher.py --width ${W} --height ${H} --pe-length ${N} --loop-count ${LOOP} --arch ${ARCH} ${EXTRA}"
 python run_launcher.py \
     --width "${W}" \
     --height "${H}" \
     --pe-length "${N}" \
+    --loop-count "${LOOP}" \
     --arch "${ARCH}" \
     ${EXTRA}
 

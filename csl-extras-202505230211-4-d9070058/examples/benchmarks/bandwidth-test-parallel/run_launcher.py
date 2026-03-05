@@ -48,6 +48,14 @@ def main():
         help='Target WSE architecture (default: wse3)'
     )
     parser.add_argument(
+        '--loop-count', '-L', type=int, default=1,
+        help='Number of back-to-back transfers (default: 1)'
+    )
+    parser.add_argument(
+        '--d2h', action='store_true',
+        help='Measure D2H bandwidth (default: H2D)'
+    )
+    parser.add_argument(
         '--sync', action='store_true',
         help='Use blocking (sync) memcpy transfers instead of async'
     )
@@ -87,13 +95,16 @@ def main():
 
     verify_flag = '--verify' if args.verify else ''
     sync_flag   = '--sync'   if args.sync   else ''
+    d2h_flag    = '--d2h'    if args.d2h    else ''
 
     run_cmd = (
         f"cs_python run_hw.py "
         f"--width {args.width} "
         f"--height {args.height} "
         f"--pe-length {args.pe_length} "
+        f"--loop-count {args.loop_count} "
         f"--latestlink latest "
+        f"{d2h_flag} "
         f"{sync_flag} "
         f"{verify_flag} "
         f"--cmaddr %CMADDR%"

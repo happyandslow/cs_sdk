@@ -59,6 +59,14 @@ def main():
         help="Number of memcpy I/O channels (default: 1, max: 16)"
     )
     parser.add_argument(
+        "--width-west-buf", type=int, default=0,
+        help="Buffer columns west of core (hides H2D latency, default: 0)"
+    )
+    parser.add_argument(
+        "--width-east-buf", type=int, default=0,
+        help="Buffer columns east of core (hides D2H latency, default: 0)"
+    )
+    parser.add_argument(
         "--arch", choices=["wse2", "wse3"], default="wse3",
         help="Target WSE architecture (default: wse3)"
     )
@@ -72,14 +80,14 @@ def main():
     H = args.height
     N = args.pe_length
     C = args.channels
+    wb = args.width_west_buf
+    eb = args.width_east_buf
 
     # Fabric dimensions and offsets for the memcpy framework.
-    # core_fabric_offset_x = 1 base + 3 west memcpy columns = 4
+    # core_fabric_offset_x = 1 base + 3 west memcpy + west buffer columns
     # core_fabric_offset_y = 1
-    # min_fabric_width  = 4 + W (core) + 2 (east memcpy) + 1 = W + 7
-    # min_fabric_height = 1 + H + 1 = H + 2
     # We use the full WSE fabric dims — always large enough for any W, H.
-    fabric_offset_x = 4   # 1 base + 3 west memcpy
+    fabric_offset_x = 4 + wb   # 1 base + 3 west memcpy + west buffer
     fabric_offset_y = 1
     fabric_dims = WSE3_FABRIC_DIMS if args.arch == "wse3" else WSE2_FABRIC_DIMS
 
@@ -90,7 +98,9 @@ def main():
         f"--params=width:{W},height:{H},pe_length:{N} "
         f"-o=latest "
         f"--memcpy "
-        f"--channels={C}"
+        f"--channels={C} "
+        f"--width-west-buf={wb} "
+        f"--width-east-buf={eb}"
     )
 
     print(f"=== bandwidth-test-parallel: SdkCompiler Compile ===")
@@ -99,6 +109,8 @@ def main():
     print(f"Height (PEs) : {H}")
     print(f"PE length    : {N} f32")
     print(f"Channels     : {C}")
+    print(f"West buffer  : {wb}")
+    print(f"East buffer  : {eb}")
     print(f"Fabric dims  : {fabric_dims}")
     print(f"Compile args : {compile_args}")
     print()

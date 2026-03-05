@@ -50,6 +50,14 @@ def main():
              "to the extracted artifact directory. (default: latest)"
     )
     parser.add_argument(
+        "--loop-count", "-L", type=int, default=1,
+        help="Number of back-to-back transfers to amortize overhead (default: 1)"
+    )
+    parser.add_argument(
+        "--d2h", action="store_true",
+        help="Measure D2H bandwidth (default: H2D)"
+    )
+    parser.add_argument(
         "--sync", action="store_true",
         help="Use blocking (sync) memcpy transfers instead of nonblocking (async). "
              "Async allows the runtime to aggregate multiple requests into fewer TCP "
@@ -67,11 +75,16 @@ def main():
     total     = W * H * pe_length
     artifact_dir = args.latestlink
 
-    print(f"=== Direct-Link Loopback Bandwidth Test (memcpy path) ===")
+    loop_count = args.loop_count
+    direction  = "D2H" if args.d2h else "H2D"
+
+    print(f"=== Memcpy Bandwidth Test ===")
     print(f"Width  (PEs) : {W}")
     print(f"Height (PEs) : {H}")
     print(f"PE length    : {pe_length} f32")
-    print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
+    print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per transfer)")
+    print(f"Direction    : {direction}")
+    print(f"Loop count   : {loop_count}")
     print(f"Transfer     : {'sync (blocking)' if args.sync else 'async (nonblocking)'}")
     print()
 
@@ -90,41 +103,61 @@ def main():
 
     print("Running bandwidth measurement ...")
     t0 = time.perf_counter()
-    runner.memcpy_h2d(
-        symbol_buf, data_h2d,
-        0, 0, W, H, pe_length,
-        streaming=False,
-        data_type=MemcpyDataType.MEMCPY_32BIT,
-        order=MemcpyOrder.ROW_MAJOR,
-        nonblock=nonblock,
-    )
-    runner.memcpy_d2h(
-        data_d2h, symbol_buf,
-        0, 0, W, H, pe_length,
-        streaming=False,
-        data_type=MemcpyDataType.MEMCPY_32BIT,
-        order=MemcpyOrder.ROW_MAJOR,
-        nonblock=nonblock,
-    )
+
+    for j in range(loop_count):
+        if args.d2h:
+            runner.memcpy_d2h(
+                data_d2h, symbol_buf,
+                0, 0, W, H, pe_length,
+                streaming=False,
+                data_type=MemcpyDataType.MEMCPY_32BIT,
+                order=MemcpyOrder.ROW_MAJOR,
+                nonblock=nonblock,
+            )
+        else:
+            runner.memcpy_h2d(
+                symbol_buf, data_h2d,
+                0, 0, W, H, pe_length,
+                streaming=False,
+                data_type=MemcpyDataType.MEMCPY_32BIT,
+                order=MemcpyOrder.ROW_MAJOR,
+                nonblock=nonblock,
+            )
+
     runner.stop()
     t1 = time.perf_counter()
 
-    elapsed_s   = t1 - t0
-    elapsed_us  = elapsed_s * 1e6
-    bytes_one   = total * 4
-    bytes_rt    = bytes_one * 2
-    bw_h2d_mbps = bytes_one / elapsed_s / 1e6
-    bw_rt_mbps  = bytes_rt  / elapsed_s / 1e6
-    bw_rt_gbps  = bytes_rt  / elapsed_s / 1e9
+    elapsed_s    = t1 - t0
+    elapsed_us   = elapsed_s * 1e6
+    bytes_total  = total * 4 * loop_count
+    bw_mbps      = bytes_total / elapsed_s / 1e6
+    bw_gbps      = bytes_total / elapsed_s / 1e9
 
     print()
     print("--- Results ---")
     print(f"Elapsed time        : {elapsed_us:.1f} us  ({elapsed_s * 1e3:.3f} ms)")
-    print(f"One-way bandwidth   : {bw_h2d_mbps:.2f} MB/s  (H2D or D2H)")
-    print(f"Round-trip BW       : {bw_rt_mbps:.2f} MB/s  ({bw_rt_gbps:.4f} GB/s)")
+    print(f"Total transferred   : {bytes_total / 1024:.1f} KB  ({loop_count} × {total * 4 / 1024:.1f} KB)")
+    print(f"Bandwidth ({direction:3s})    : {bw_mbps:.2f} MB/s  ({bw_gbps:.4f} GB/s)")
 
     if args.verify:
         print()
+        print("Note: --verify requires a separate round-trip run (H2D+D2H).")
+        print("      Re-launching runtime for verification ...")
+        runner_v = SdkRuntime(artifact_dir, cmaddr=args.cmaddr)
+        sym_v = runner_v.get_id("buf")
+        runner_v.load()
+        runner_v.run()
+        runner_v.memcpy_h2d(
+            sym_v, data_h2d, 0, 0, W, H, pe_length,
+            streaming=False, data_type=MemcpyDataType.MEMCPY_32BIT,
+            order=MemcpyOrder.ROW_MAJOR, nonblock=True,
+        )
+        runner_v.memcpy_d2h(
+            data_d2h, sym_v, 0, 0, W, H, pe_length,
+            streaming=False, data_type=MemcpyDataType.MEMCPY_32BIT,
+            order=MemcpyOrder.ROW_MAJOR, nonblock=True,
+        )
+        runner_v.stop()
         if np.array_equal(data_h2d, data_d2h):
             print("Verification: PASSED (loopback data matches exactly)")
         else:
