@@ -80,12 +80,12 @@ def decode_timestamps(time_buf_f32):
 # Layout construction
 # ---------------------------------------------------------------------------
 
-def build_layout(platform, pe_length):
+def build_layout(platform, buf_size, num_batches):
     """Construct the SdkLayout with a single 1x1 direct core."""
     layout = SdkLayout(platform)
 
     (core_in_port, core_out_port, core) = get_direct_core(
-        layout, 'core', pe_length
+        layout, 'core', buf_size, num_batches
     )
     core.place(1, 0)
 
@@ -104,8 +104,12 @@ def main():
         description='Direct-link H2D bandwidth test with on-device timing'
     )
     parser.add_argument(
-        '--pe-length', '-N', type=int, default=1024,
-        help='Number of f32 elements to send to the PE (default: 1024)'
+        '--buf-size', '-B', type=int, default=1024,
+        help='Buffer size per batch in f32 elements (default: 1024)'
+    )
+    parser.add_argument(
+        '--num-batches', '-K', type=int, default=1,
+        help='Number of batches to receive (default: 1)'
     )
     parser.add_argument(
         '--cmaddr',
@@ -117,11 +121,15 @@ def main():
     )
     args = parser.parse_args()
 
-    pe_length = args.pe_length
+    buf_size    = args.buf_size
+    num_batches = args.num_batches
+    total_elems = buf_size * num_batches
 
     print(f"=== Direct-Link H2D Bandwidth Test (on-device timing) ===")
     print(f"Architecture : {args.arch.upper()}")
-    print(f"PE length    : {pe_length} f32  ({pe_length * 4 / 1024:.1f} KB)")
+    print(f"Buffer size  : {buf_size} f32  ({buf_size * 4 / 1024:.1f} KB)")
+    print(f"Num batches  : {num_batches}")
+    print(f"Total data   : {total_elems} f32  ({total_elems * 4 / 1024:.1f} KB)")
     print()
 
     # ---- Platform ----
@@ -131,7 +139,7 @@ def main():
 
     # ---- Build and compile layout ----
     print("Building and compiling layout ...")
-    layout, h2d_stream, d2h_stream = build_layout(platform, pe_length)
+    layout, h2d_stream, d2h_stream = build_layout(platform, buf_size, num_batches)
     t_compile_start = time.perf_counter()
     compile_artifacts = layout.compile(out_prefix='out')
     t_compile_end = time.perf_counter()
@@ -144,7 +152,7 @@ def main():
     runtime.run()
 
     # ---- Data ----
-    data_h2d = np.arange(pe_length, dtype=np.float32)
+    data_h2d = np.arange(total_elems, dtype=np.float32)
     # PE sends back 4 f32 of packed timestamps (3 data + 1 padding)
     time_buf = np.zeros(4, dtype=np.float32)
 
@@ -159,7 +167,7 @@ def main():
     cycles = time_end - time_start
     # 850 MHz clock: 1 cycle = (1/0.85) ns = (1/0.85)*1e-3 us
     time_us = (cycles / 0.85) * 1.0e-3
-    data_bytes = pe_length * 4
+    data_bytes = total_elems * 4
     bw_mbps = data_bytes / time_us if time_us > 0 else 0.0
     bw_gbps = bw_mbps / 1000.0
 

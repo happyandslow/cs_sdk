@@ -27,25 +27,29 @@ echo "============================================================"
 echo ""
 
 # ---- Single pipeline tests ----
-echo "[TEST 1/5] Single PE, pe_length=64"
-cs_python run.py --pe-length 64 --arch "${ARCH}"
+echo "[TEST 1/6] Single PE, buf_size=64, 1 batch"
+cs_python run.py --buf-size 64 --arch "${ARCH}"
 echo ""
 
-echo "[TEST 2/5] Single PE, pe_length=1024"
-cs_python run.py --pe-length 1024 --arch "${ARCH}"
+echo "[TEST 2/6] Single PE, buf_size=1024, 1 batch"
+cs_python run.py --buf-size 1024 --arch "${ARCH}"
 echo ""
 
-echo "[TEST 3/5] Single PE, pe_length=4096"
-cs_python run.py --pe-length 4096 --arch "${ARCH}"
+echo "[TEST 3/6] Single PE, buf_size=1024, 10 batches (10 KB total)"
+cs_python run.py --buf-size 1024 --num-batches 10 --arch "${ARCH}"
 echo ""
 
 # ---- Parallel pipeline tests ----
-echo "[TEST 4/5] 2 pipelines, pe_length=1024"
-cs_python run_parallel.py --num-pipelines 2 --pe-length 1024 --arch "${ARCH}"
+echo "[TEST 4/6] 2 pipelines, buf_size=1024, 1 batch"
+cs_python run_parallel.py --num-pipelines 2 --buf-size 1024 --arch "${ARCH}"
 echo ""
 
-echo "[TEST 5/5] 4 pipelines, pe_length=1024"
-cs_python run_parallel.py --num-pipelines 4 --pe-length 1024 --arch "${ARCH}"
+echo "[TEST 5/6] 4 pipelines, buf_size=1024, 1 batch"
+cs_python run_parallel.py --num-pipelines 4 --buf-size 1024 --arch "${ARCH}"
+echo ""
+
+echo "[TEST 6/6] 2 pipelines, buf_size=512, 8 batches (16 KB total)"
+cs_python run_parallel.py --num-pipelines 2 --buf-size 512 --num-batches 8 --arch "${ARCH}"
 echo ""
 
 echo "============================================================"

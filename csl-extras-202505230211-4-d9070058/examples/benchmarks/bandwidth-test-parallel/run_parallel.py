@@ -74,7 +74,7 @@ def decode_timestamps(time_buf_f32):
 # Layout construction
 # ---------------------------------------------------------------------------
 
-def build_layout(platform, num_pipelines, pe_length):
+def build_layout(platform, num_pipelines, buf_size, num_batches):
     """
     Construct an SdkLayout with num_pipelines independent direct-core PEs.
 
@@ -85,7 +85,7 @@ def build_layout(platform, num_pipelines, pe_length):
 
     for i in range(num_pipelines):
         (core_in_port, core_out_port, core) = get_direct_core(
-            layout, f'core_{i}', pe_length
+            layout, f'core_{i}', buf_size, num_batches
         )
         core.place(1, i)
 
@@ -109,8 +109,12 @@ def main():
         help='Number of parallel pipelines (default: 2)'
     )
     parser.add_argument(
-        '--pe-length', '-N', type=int, default=1024,
-        help='Number of f32 elements per PE (default: 1024)'
+        '--buf-size', '-B', type=int, default=1024,
+        help='Buffer size per batch in f32 elements (default: 1024)'
+    )
+    parser.add_argument(
+        '--num-batches', '-K', type=int, default=1,
+        help='Number of batches per PE (default: 1)'
     )
     parser.add_argument(
         '--cmaddr',
@@ -122,14 +126,18 @@ def main():
     )
     args = parser.parse_args()
 
-    P         = args.num_pipelines
-    pe_length = args.pe_length
-    total     = P * pe_length
+    P           = args.num_pipelines
+    buf_size    = args.buf_size
+    num_batches = args.num_batches
+    pe_elems    = buf_size * num_batches   # total f32 per PE
+    total       = P * pe_elems
 
     print(f"=== Parallel H2D Bandwidth Test (on-device timing) ===")
     print(f"Architecture : {args.arch.upper()}")
     print(f"Pipelines    : {P}")
-    print(f"PE length    : {pe_length} f32  ({pe_length * 4 / 1024:.1f} KB)")
+    print(f"Buffer size  : {buf_size} f32  ({buf_size * 4 / 1024:.1f} KB)")
+    print(f"Num batches  : {num_batches}")
+    print(f"Per-PE data  : {pe_elems} f32  ({pe_elems * 4 / 1024:.1f} KB)")
     print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB)")
     print()
 
@@ -140,7 +148,7 @@ def main():
 
     # ---- Build and compile layout ----
     print("Building and compiling layout ...")
-    layout, streams = build_layout(platform, P, pe_length)
+    layout, streams = build_layout(platform, P, buf_size, num_batches)
     t_compile_start = time.perf_counter()
     compile_artifacts = layout.compile(out_prefix='out')
     t_compile_end = time.perf_counter()
@@ -156,7 +164,7 @@ def main():
     data_h2d = []
     time_bufs = []
     for i in range(P):
-        data_h2d.append(np.arange(i * pe_length, (i + 1) * pe_length, dtype=np.float32))
+        data_h2d.append(np.arange(i * pe_elems, (i + 1) * pe_elems, dtype=np.float32))
         time_bufs.append(np.zeros(4, dtype=np.float32))
 
     # ---- Transfer (all pipelines concurrent) ----
@@ -171,7 +179,7 @@ def main():
     print()
     print(f"--- Results ({P} pipelines, on-device timing) ---")
 
-    data_bytes_per = pe_length * 4
+    data_bytes_per = pe_elems * 4
     all_starts = []
     all_ends = []
 

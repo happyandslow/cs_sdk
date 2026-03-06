@@ -8,13 +8,16 @@ run.py (single pipeline) or run_parallel.py (multiple pipelines).
 
 Usage:
     # Single pipeline (default)
-    python run_appliance.py --pe-length 1024 --arch wse3
+    python run_appliance.py --buf-size 1024 --arch wse3
+
+    # Large transfer with batching
+    python run_appliance.py --buf-size 1024 --num-batches 100
 
     # Parallel pipelines
-    python run_appliance.py --num-pipelines 4 --pe-length 1024
+    python run_appliance.py --num-pipelines 4 --buf-size 1024 --num-batches 10
 
     # Appliance simulator
-    python run_appliance.py --num-pipelines 2 --pe-length 256 --simulator
+    python run_appliance.py --num-pipelines 2 --buf-size 256 --simulator
 """
 
 import argparse
@@ -42,8 +45,12 @@ def main():
         help='Number of parallel pipelines (default: 1 = single pipeline via run.py)'
     )
     parser.add_argument(
-        '--pe-length', '-N', type=int, default=1024,
-        help='Number of f32 elements per PE (default: 1024)'
+        '--buf-size', '-B', type=int, default=1024,
+        help='Buffer size per batch in f32 elements (default: 1024)'
+    )
+    parser.add_argument(
+        '--num-batches', '-K', type=int, default=1,
+        help='Number of batches per PE (default: 1)'
     )
     parser.add_argument(
         '--arch', choices=['wse2', 'wse3'], default='wse3',
@@ -71,26 +78,31 @@ def main():
     for f in FILES_TO_STAGE:
         shutil.copy2(f, os.path.join(staging_dir, f))
 
+    buf_args = f"--buf-size {args.buf_size} --num-batches {args.num_batches}"
+
     if args.num_pipelines > 1:
         run_cmd = (
             f"cs_python run_parallel.py "
             f"--num-pipelines {args.num_pipelines} "
-            f"--pe-length {args.pe_length} "
+            f"{buf_args} "
             f"--arch {args.arch} "
             f"--cmaddr %CMADDR%"
         )
     else:
         run_cmd = (
             f"cs_python run.py "
-            f"--pe-length {args.pe_length} "
+            f"{buf_args} "
             f"--arch {args.arch} "
             f"--cmaddr %CMADDR%"
         )
 
+    pe_elems = args.buf_size * args.num_batches
     print(f"=== bandwidth-test-parallel: Appliance Launcher ===")
     print(f"Architecture : {args.arch.upper()}")
     print(f"Pipelines    : {args.num_pipelines}")
-    print(f"PE length    : {args.pe_length} f32")
+    print(f"Buffer size  : {args.buf_size} f32")
+    print(f"Num batches  : {args.num_batches}")
+    print(f"Per-PE data  : {pe_elems} f32  ({pe_elems * 4 / 1024:.1f} KB)")
     print(f"Simulator    : {args.simulator}")
     print(f"Run command  : {run_cmd}")
     print()

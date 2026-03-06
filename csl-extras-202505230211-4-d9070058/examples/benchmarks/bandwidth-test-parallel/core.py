@@ -42,18 +42,21 @@ def get_loopback_core(layout, name, pe_length, width, height):
     return (in_port, out_port, core)
 
 
-def get_direct_core(layout, name, pe_length):
+def get_direct_core(layout, name, buf_size, num_batches):
     """
     Create a 1×1 direct bandwidth-measurement core.
 
-    The PE receives pe_length f32 wavelets from the host (LEFT edge),
-    records on-device timestamps (time_start before DMA, time_end after),
-    and sends 3 f32 of packed timing data back (RIGHT edge).
+    The PE receives buf_size * num_batches f32 wavelets from the host
+    (LEFT edge), reusing a small buffer of buf_size f32 for each batch.
+    Records on-device timestamps (time_start before first batch,
+    time_end after last batch), and sends 4 f32 of packed timing data
+    back (RIGHT edge).
 
     Returns: (core_in_port, core_out_port, core_region)
     """
     core = layout.create_code_region('./src/bw_direct_kernel.csl', name, 1, 1)
-    core.set_param_all('pe_length', pe_length)
+    core.set_param_all('buf_size', buf_size)
+    core.set_param_all('num_batches', num_batches)
 
     in_color  = core.color('in_color')
     out_color = core.color('out_color')
@@ -68,8 +71,9 @@ def get_direct_core(layout, name, pe_length):
     core.paint_all(out_color,
                    [RoutingPosition().set_input([Route.RAMP]).set_output([Route.EAST])])
 
+    total_wavelets = buf_size * num_batches
     in_port  = core.create_input_port(
-        in_color, Edge.LEFT, [RoutingPosition().set_output([Route.RAMP])], pe_length)
+        in_color, Edge.LEFT, [RoutingPosition().set_output([Route.RAMP])], total_wavelets)
     # Output is 4 f32 (packed timing data; ports require even wavelet count).
     out_port = core.create_output_port(
         out_color, Edge.RIGHT, [RoutingPosition().set_input([Route.RAMP])], 4)

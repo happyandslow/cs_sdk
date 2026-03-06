@@ -1,22 +1,29 @@
 // Per-PE bandwidth measurement kernel for direct-link testing.
 //
-// Receives pe_length f32 wavelets on in_color (from host via direct stream),
-// records on-device timestamps before and after the DMA transfer, then sends
-// 3 f32 of packed timing data out on out_color.
+// Receives buf_size * num_batches f32 wavelets on in_color, discarding data
+// after each batch (reusing the same small buffer). This allows measuring
+// bandwidth for transfers much larger than the PE's SRAM.
+//
+// Records on-device timestamps before the first batch and after the last,
+// then sends 4 f32 of packed timing data out on out_color.
 //
 // Timestamp packing (same as bandwidth-test/bw_sync_kernel.csl):
-//   time_buf_f32[0] = {tscStart[1], tscStart[0]}   (as u32 bitcast to f32)
+//   time_buf_f32[0] = {tscStart[1], tscStart[0]}
 //   time_buf_f32[1] = {tscEnd[0],   tscStart[2]}
 //   time_buf_f32[2] = {tscEnd[2],   tscEnd[1]}
+//   time_buf_f32[3] = 0  (padding; ports require even wavelet count)
 //
 // Flow:
 //   startup -> enable TSC -> activate recv
-//   recv    -> record time_start -> DMA receive pe_length wavelets -> activate done
-//   done    -> record time_end -> pack timestamps -> send 3 f32 via out_color
+//   recv    -> record time_start -> DMA receive buf_size wavelets -> activate batch_done
+//   batch_done -> if batches remaining: DMA receive again -> activate batch_done
+//             -> else: activate done
+//   done    -> record time_end -> pack timestamps -> send 4 f32 via out_color
 
 param in_color:  comptime_int;
 param out_color: comptime_int;
-param pe_length: u16;
+param buf_size:  u16;    // number of f32 per batch (size of local buffer)
+param num_batches: u16;  // number of batches to receive
 
 const in_color_obj  = @get_color(in_color);
 const out_color_obj = @get_color(out_color);
@@ -26,19 +33,22 @@ const timestamp = @import_module("<time>");
 const input_q  = @get_input_queue(0);
 const output_q = @get_output_queue(0);
 
-// Local buffer: stores pe_length f32 wavelets from host.
-var buf = @zeros([pe_length]f32);
+// Local buffer: reused for every batch (data is discarded).
+var buf = @zeros([buf_size]f32);
 
 // TSC buffers (each is u16[3] = 48 bits).
 var tscStartBuffer = @zeros([timestamp.tsc_size_words]u16);
 var tscEndBuffer   = @zeros([timestamp.tsc_size_words]u16);
 
-// Packed timing output: 4 f32 words (3 data + 1 padding; ports require even wavelet count).
+// Packed timing output: 4 f32 words (3 data + 1 padding).
 var time_buf_f32 = @zeros([4]f32);
 
+// Batch counter.
+var batches_remaining: u16 = num_batches;
+
 // DSDs
-const mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &buf, .extent = pe_length });
-const in_dsd  = @get_dsd(fabin_dsd, .{ .extent       = pe_length,
+const mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &buf, .extent = buf_size });
+const in_dsd  = @get_dsd(fabin_dsd, .{ .extent       = buf_size,
                                         .fabric_color  = in_color_obj,
                                         .input_queue   = input_q });
 
@@ -48,9 +58,10 @@ const time_out_dsd = @get_dsd(fabout_dsd, .{ .extent       = 4,
                                               .output_queue  = output_q });
 
 // Task IDs
-const startup_id = @get_local_task_id(7);
-const recv_id    = @get_local_task_id(8);
-const done_id    = @get_local_task_id(9);
+const startup_id    = @get_local_task_id(7);
+const recv_id       = @get_local_task_id(8);
+const batch_done_id = @get_local_task_id(9);
+const done_id       = @get_local_task_id(10);
 
 // Step 0: enable the timestamp counter, then activate recv.
 task startup() void {
@@ -58,17 +69,27 @@ task startup() void {
   @activate(recv_id);
 }
 
-// Step 1: record time_start, then DMA-receive pe_length wavelets from fabric.
+// Step 1: record time_start, then DMA-receive first batch.
 task recv() void {
   timestamp.get_timestamp(&tscStartBuffer);
-  @mov32(mem_dsd, in_dsd, .{ .async = true, .activate = done_id });
+  batches_remaining -= 1;
+  @mov32(mem_dsd, in_dsd, .{ .async = true, .activate = batch_done_id });
 }
 
-// Step 2: record time_end, pack timestamps, send timing data out.
+// Step 2: called after each batch completes. Loop or finish.
+task batch_done() void {
+  if (batches_remaining > 0) {
+    batches_remaining -= 1;
+    @mov32(mem_dsd, in_dsd, .{ .async = true, .activate = batch_done_id });
+  } else {
+    @activate(done_id);
+  }
+}
+
+// Step 3: record time_end, pack timestamps, send timing data out.
 task done() void {
   timestamp.get_timestamp(&tscEndBuffer);
 
-  // Pack {tscStart, tscEnd} into 3 f32 words (same layout as bandwidth-test).
   var lo_: u16 = 0;
   var hi_: u16 = 0;
 
@@ -90,6 +111,7 @@ task done() void {
 comptime {
   @bind_local_task(startup, startup_id);
   @bind_local_task(recv, recv_id);
+  @bind_local_task(batch_done, batch_done_id);
   @bind_local_task(done, done_id);
   @activate(startup_id);
 
