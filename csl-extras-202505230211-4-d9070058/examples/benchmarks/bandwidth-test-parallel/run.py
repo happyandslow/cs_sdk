@@ -1,24 +1,26 @@
 #!/usr/bin/env cs_python
 """
-Single-host loopback bandwidth test using the SdkLayout direct-link API.
+Direct-link H2D bandwidth test with on-device timing.
 
-Architecture (single column of H PEs):
+Architecture (single PE, no demux/mux):
 
-  host --[h2d_stream]--> in_adaptor(1x1) --> in_demux(1xH) --> core(1xH) --> out_mux(1xH) --[d2h_stream]--> host
+  host --[h2d_stream]--> core PE (1x1) --[d2h_stream]--> host (3 f32 timing)
 
-  * in_adaptor  : injects SWITCH_ADV after every pe_length wavelets
-  * in_demux    : vertical demux; PE[i] receives pe_length wavelets each
-  * core        : each PE buffers pe_length wavelets, then echoes them back
-  * out_mux     : serialises results; PE[0] sends first, PE[1] next, etc.
+The PE:
+  1. Enables TSC at startup
+  2. Records time_start (48-bit TSC)
+  3. DMA-receives pe_length f32 wavelets from host
+  4. Records time_end
+  5. Packs {time_start, time_end} into 3 f32 and sends via d2h stream
 
-Host-side wall-clock timing measures round-trip (H2D + D2H) bandwidth.
-
-Works in both simulator mode (--cmaddr omitted) and on the CS appliance
-(--cmaddr IP:PORT). When launched via run_appliance.py, the appliance
-worker runs this script with --cmaddr %CMADDR%.
+Bandwidth is computed from on-device timestamps:
+  cycles = time_end - time_start
+  time_us = cycles / 0.85e3   (850 MHz clock)
+  BW = (pe_length * 4 bytes) / time_us
 """
 
 import argparse
+import struct
 import time
 
 import numpy as np
@@ -31,64 +33,79 @@ from cerebras.sdk.runtime.sdkruntimepybind import (
     get_platform,
 )
 
-from core  import get_loopback_core
-from demux import get_demux_adaptor, get_b_demux
-from mux   import get_mux
+from core import get_direct_core
 
 
-def build_layout(platform, width, height, pe_length):
-    """Construct the SdkLayout and return (layout, h2d_stream, d2h_stream)."""
+# ---------------------------------------------------------------------------
+# Timestamp decoding (same as bandwidth-test/run.py)
+# ---------------------------------------------------------------------------
+
+def float_to_hex(f):
+    return hex(struct.unpack("<I", struct.pack("<f", f))[0])
+
+
+def make_u48(words):
+    return words[0] + (words[1] << 16) + (words[2] << 32)
+
+
+def decode_timestamps(time_buf_f32):
+    """
+    Decode 3 f32 words into (time_start, time_end) as 48-bit integers.
+
+    Packing layout (from bw_direct_kernel.csl / bw_sync_kernel.csl):
+      f32[0] = {tscStart[1], tscStart[0]}
+      f32[1] = {tscEnd[0],   tscStart[2]}
+      f32[2] = {tscEnd[2],   tscEnd[1]}
+    """
+    word = np.zeros(3, dtype=np.uint16)
+
+    hex_t0 = int(float_to_hex(time_buf_f32[0]), base=16)
+    hex_t1 = int(float_to_hex(time_buf_f32[1]), base=16)
+    hex_t2 = int(float_to_hex(time_buf_f32[2]), base=16)
+
+    word[0] = hex_t0 & 0x0000FFFF
+    word[1] = (hex_t0 >> 16) & 0x0000FFFF
+    word[2] = hex_t1 & 0x0000FFFF
+    time_start = make_u48(word)
+
+    word[0] = (hex_t1 >> 16) & 0x0000FFFF
+    word[1] = hex_t2 & 0x0000FFFF
+    word[2] = (hex_t2 >> 16) & 0x0000FFFF
+    time_end = make_u48(word)
+
+    return time_start, time_end
+
+
+# ---------------------------------------------------------------------------
+# Layout construction
+# ---------------------------------------------------------------------------
+
+def build_layout(platform, pe_length):
+    """Construct the SdkLayout with a single 1x1 direct core."""
     layout = SdkLayout(platform)
 
-    # ---- Input adaptor (1x1) ----
-    (h2d_port, adaptor_out_port, adaptor) = get_demux_adaptor(
-        layout, 'in_adaptor', pe_length, width * height
+    (core_in_port, core_out_port, core) = get_direct_core(
+        layout, 'core', pe_length
     )
-    adaptor.place(1, 0)
+    core.place(1, 0)
 
-    # ---- Vertical demux (width x height) ----
-    (demux_in_port, demux_out_port, demux) = get_b_demux(
-        layout, 'in_demux', pe_length, width, height
-    )
-    demux.place(2, 0)
-    layout.connect(adaptor_out_port, demux_in_port)
-
-    # ---- Loopback core (width x height) ----
-    (core_in_port, core_out_port, core) = get_loopback_core(
-        layout, 'core', pe_length, width, height
-    )
-    core.place(2 + width, 0)
-    layout.connect(demux_out_port, core_in_port)
-
-    # ---- Mux (width x height) ----
-    (mux_in_port, d2h_port, mux) = get_mux(
-        layout, 'out_mux', pe_length, width, height
-    )
-    mux.place(2 + 2 * width, 0)
-    layout.connect(core_out_port, mux_in_port)
-
-    # ---- Host I/O streams ----
-    h2d_stream = layout.create_input_stream(h2d_port)
-    d2h_stream = layout.create_output_stream(d2h_port)
+    h2d_stream = layout.create_input_stream(core_in_port)
+    d2h_stream = layout.create_output_stream(core_out_port)
 
     return layout, h2d_stream, d2h_stream
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Direct-link loopback bandwidth test (single-host)'
-    )
-    parser.add_argument(
-        '--width', '-W', type=int, default=1,
-        help='Number of PE columns (default: 1)'
-    )
-    parser.add_argument(
-        '--height', '-H', type=int, default=4,
-        help='Number of PE rows (default: 4)'
+        description='Direct-link H2D bandwidth test with on-device timing'
     )
     parser.add_argument(
         '--pe-length', '-N', type=int, default=1024,
-        help='Number of f32 elements per PE (default: 1024, max: ~4096)'
+        help='Number of f32 elements to send to the PE (default: 1024)'
     )
     parser.add_argument(
         '--cmaddr',
@@ -98,30 +115,13 @@ def main():
         '--arch', choices=['wse2', 'wse3'], default='wse3',
         help='Target WSE architecture (default: wse3)'
     )
-    parser.add_argument(
-        '--verify', action='store_true',
-        help='Verify loopback: check that received data matches sent data'
-    )
     args = parser.parse_args()
 
-    W         = args.width
-    H         = args.height
     pe_length = args.pe_length
-    total     = W * H * pe_length
 
-    if W != 1:
-        raise ValueError(
-            f"--width={W} not yet supported in direct-link mode. "
-            "Width > 1 requires multiple independent streams (one per column). "
-            "Use --width=1 for now."
-        )
-
-    print(f"=== Direct-Link Loopback Bandwidth Test ===")
+    print(f"=== Direct-Link H2D Bandwidth Test (on-device timing) ===")
     print(f"Architecture : {args.arch.upper()}")
-    print(f"Width  (PEs) : {W}")
-    print(f"Height (PEs) : {H}")
-    print(f"PE length    : {pe_length} f32")
-    print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
+    print(f"PE length    : {pe_length} f32  ({pe_length * 4 / 1024:.1f} KB)")
     print()
 
     # ---- Platform ----
@@ -131,7 +131,7 @@ def main():
 
     # ---- Build and compile layout ----
     print("Building and compiling layout ...")
-    layout, h2d_stream, d2h_stream = build_layout(platform, W, H, pe_length)
+    layout, h2d_stream, d2h_stream = build_layout(platform, pe_length)
     t_compile_start = time.perf_counter()
     compile_artifacts = layout.compile(out_prefix='out')
     t_compile_end = time.perf_counter()
@@ -144,44 +144,33 @@ def main():
     runtime.run()
 
     # ---- Data ----
-    data_h2d = np.arange(total, dtype=np.float32)
-    data_d2h = np.empty(total, dtype=np.float32)
+    data_h2d = np.arange(pe_length, dtype=np.float32)
+    # PE sends back 3 f32 of packed timestamps
+    time_buf = np.zeros(3, dtype=np.float32)
 
-    # ---- Timed round-trip ----
-    print("Running bandwidth measurement ...")
-    t0 = time.perf_counter()
-    runtime.send(h2d_stream,  data_h2d, nonblock=True)
-    runtime.receive(d2h_stream, data_d2h, total, nonblock=True)
+    # ---- Transfer ----
+    print("Sending data and receiving timestamps ...")
+    runtime.send(h2d_stream, data_h2d, nonblock=True)
+    runtime.receive(d2h_stream, time_buf, 3, nonblock=True)
     runtime.stop()
-    t1 = time.perf_counter()
 
-    # ---- Report ----
-    elapsed_s   = t1 - t0
-    elapsed_us  = elapsed_s * 1e6
-    bytes_one   = total * 4
-    bytes_rt    = bytes_one * 2
-    bw_h2d_mbps = bytes_one / elapsed_s / 1e6
-    bw_rt_mbps  = bytes_rt  / elapsed_s / 1e6
-    bw_rt_gbps  = bytes_rt  / elapsed_s / 1e9
+    # ---- Decode on-device timestamps ----
+    time_start, time_end = decode_timestamps(time_buf)
+    cycles = time_end - time_start
+    # 850 MHz clock: 1 cycle = (1/0.85) ns = (1/0.85)*1e-3 us
+    time_us = (cycles / 0.85) * 1.0e-3
+    data_bytes = pe_length * 4
+    bw_mbps = data_bytes / time_us if time_us > 0 else 0.0
+    bw_gbps = bw_mbps / 1000.0
 
     print()
-    print(f"--- Results ---")
-    print(f"Elapsed time        : {elapsed_us:.1f} us  ({elapsed_s * 1e3:.3f} ms)")
-    print(f"One-way bandwidth   : {bw_h2d_mbps:.2f} MB/s  (H2D or D2H, half of round-trip)")
-    print(f"Round-trip BW       : {bw_rt_mbps:.2f} MB/s  ({bw_rt_gbps:.4f} GB/s)")
-
-    # ---- Optional verification ----
-    if args.verify:
-        print()
-        if np.array_equal(data_h2d, data_d2h):
-            print("Verification: PASSED (loopback data matches exactly)")
-        else:
-            mismatches = np.sum(data_h2d != data_d2h)
-            print(f"Verification: FAILED ({mismatches}/{total} elements differ)")
-            bad = np.where(data_h2d != data_d2h)[0][:5]
-            for i in bad:
-                print(f"  [idx={i}] sent={data_h2d[i]:.4f}  recv={data_d2h[i]:.4f}")
-            raise RuntimeError("Loopback verification failed")
+    print(f"--- Results (on-device timing) ---")
+    print(f"time_start          : {time_start}")
+    print(f"time_end            : {time_end}")
+    print(f"Elapsed cycles      : {cycles}")
+    print(f"Elapsed time        : {time_us:.1f} us")
+    print(f"Data transferred    : {data_bytes} bytes  ({data_bytes / 1024:.1f} KB)")
+    print(f"H2D Bandwidth       : {bw_mbps:.2f} MB/s  ({bw_gbps:.4f} GB/s)")
 
 
 if __name__ == '__main__':

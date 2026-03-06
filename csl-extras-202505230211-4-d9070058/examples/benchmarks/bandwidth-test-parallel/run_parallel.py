@@ -1,23 +1,27 @@
 #!/usr/bin/env cs_python
 """
-Parallel-stream loopback bandwidth test using the SdkLayout direct-link API.
+Parallel-stream H2D bandwidth test with on-device timing.
 
-Creates N independent pipelines, each with its own:
-  adaptor(1x1) -> demux(1xH) -> core(1xH) -> mux(1xH)
-and its own h2d/d2h stream pair.
+Creates N independent pipelines, each a single PE connected directly to
+its own h2d/d2h stream pair (no demux/mux).
 
-Fabric layout (N pipelines, each H rows tall, stacked vertically):
+Fabric layout (N pipelines stacked vertically):
 
-  Y=0:     [adaptor_0] [demux_0] [core_0] [mux_0]    <- pipeline 0
-  Y=H:     [adaptor_1] [demux_1] [core_1] [mux_1]    <- pipeline 1
-  Y=2H:    [adaptor_2] [demux_2] [core_2] [mux_2]    <- pipeline 2
+  Y=0:   [core_0]    <- pipeline 0
+  Y=1:   [core_1]    <- pipeline 1
+  Y=2:   [core_2]    <- pipeline 2
   ...
 
-All streams are sent/received concurrently (nonblock=True) from a single host.
-This tests whether the SDK can handle multiple independent FPGA links in parallel.
+Each PE:
+  1. Enables TSC at startup
+  2. Records time_start, DMA-receives pe_length f32 from host
+  3. Records time_end, sends 3 f32 packed timestamps via d2h stream
+
+Bandwidth is computed per-pipeline from on-device timestamps, then aggregated.
 """
 
 import argparse
+import struct
 import time
 
 import numpy as np
@@ -30,75 +34,83 @@ from cerebras.sdk.runtime.sdkruntimepybind import (
     get_platform,
 )
 
-from core  import get_loopback_core
-from demux import get_demux_adaptor, get_b_demux
-from mux   import get_mux
+from core import get_direct_core
 
 
-def build_layout(platform, num_pipelines, height, pe_length):
+# ---------------------------------------------------------------------------
+# Timestamp decoding (same as bandwidth-test/run.py)
+# ---------------------------------------------------------------------------
+
+def float_to_hex(f):
+    return hex(struct.unpack("<I", struct.pack("<f", f))[0])
+
+
+def make_u48(words):
+    return words[0] + (words[1] << 16) + (words[2] << 32)
+
+
+def decode_timestamps(time_buf_f32):
+    """Decode 3 f32 words into (time_start, time_end) as 48-bit integers."""
+    word = np.zeros(3, dtype=np.uint16)
+
+    hex_t0 = int(float_to_hex(time_buf_f32[0]), base=16)
+    hex_t1 = int(float_to_hex(time_buf_f32[1]), base=16)
+    hex_t2 = int(float_to_hex(time_buf_f32[2]), base=16)
+
+    word[0] = hex_t0 & 0x0000FFFF
+    word[1] = (hex_t0 >> 16) & 0x0000FFFF
+    word[2] = hex_t1 & 0x0000FFFF
+    time_start = make_u48(word)
+
+    word[0] = (hex_t1 >> 16) & 0x0000FFFF
+    word[1] = hex_t2 & 0x0000FFFF
+    word[2] = (hex_t2 >> 16) & 0x0000FFFF
+    time_end = make_u48(word)
+
+    return time_start, time_end
+
+
+# ---------------------------------------------------------------------------
+# Layout construction
+# ---------------------------------------------------------------------------
+
+def build_layout(platform, num_pipelines, pe_length):
     """
-    Construct an SdkLayout with num_pipelines independent loopback pipelines.
+    Construct an SdkLayout with num_pipelines independent direct-core PEs.
 
     Returns: (layout, [(h2d_stream, d2h_stream), ...])
     """
     layout = SdkLayout(platform)
     streams = []
-    width = 1  # each pipeline is a single column
 
     for i in range(num_pipelines):
-        y_offset = i * height
-        suffix = f'_{i}'
-
-        # ---- Input adaptor (1x1) ----
-        (h2d_port, adaptor_out_port, adaptor) = get_demux_adaptor(
-            layout, f'in_adaptor{suffix}', pe_length, width * height
+        (core_in_port, core_out_port, core) = get_direct_core(
+            layout, f'core_{i}', pe_length
         )
-        adaptor.place(1, y_offset)
+        core.place(1, i)
 
-        # ---- Vertical demux (1 x height) ----
-        (demux_in_port, demux_out_port, demux) = get_b_demux(
-            layout, f'in_demux{suffix}', pe_length, width, height
-        )
-        demux.place(2, y_offset)
-        layout.connect(adaptor_out_port, demux_in_port)
-
-        # ---- Loopback core (1 x height) ----
-        (core_in_port, core_out_port, core) = get_loopback_core(
-            layout, f'core{suffix}', pe_length, width, height
-        )
-        core.place(2 + width, y_offset)
-        layout.connect(demux_out_port, core_in_port)
-
-        # ---- Mux (1 x height) ----
-        (mux_in_port, d2h_port, mux) = get_mux(
-            layout, f'out_mux{suffix}', pe_length, width, height
-        )
-        mux.place(2 + 2 * width, y_offset)
-        layout.connect(core_out_port, mux_in_port)
-
-        # ---- Host I/O streams ----
-        h2d_stream = layout.create_input_stream(h2d_port)
-        d2h_stream = layout.create_output_stream(d2h_port)
+        h2d_stream = layout.create_input_stream(core_in_port)
+        d2h_stream = layout.create_output_stream(core_out_port)
         streams.append((h2d_stream, d2h_stream))
 
     return layout, streams
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Parallel-stream direct-link loopback bandwidth test'
+        description='Parallel-stream H2D bandwidth test with on-device timing'
     )
     parser.add_argument(
         '--num-pipelines', '-P', type=int, default=2,
         help='Number of parallel pipelines (default: 2)'
     )
     parser.add_argument(
-        '--height', '-H', type=int, default=4,
-        help='Number of PE rows per pipeline (default: 4)'
-    )
-    parser.add_argument(
         '--pe-length', '-N', type=int, default=1024,
-        help='Number of f32 elements per PE (default: 1024, max: ~4096)'
+        help='Number of f32 elements per PE (default: 1024)'
     )
     parser.add_argument(
         '--cmaddr',
@@ -108,25 +120,17 @@ def main():
         '--arch', choices=['wse2', 'wse3'], default='wse3',
         help='Target WSE architecture (default: wse3)'
     )
-    parser.add_argument(
-        '--verify', action='store_true',
-        help='Verify loopback: check that received data matches sent data'
-    )
     args = parser.parse_args()
 
     P         = args.num_pipelines
-    H         = args.height
     pe_length = args.pe_length
-    per_pipe  = H * pe_length       # f32 elements per pipeline
-    total     = P * per_pipe        # f32 elements across all pipelines
+    total     = P * pe_length
 
-    print(f"=== Parallel Direct-Link Loopback Bandwidth Test ===")
+    print(f"=== Parallel H2D Bandwidth Test (on-device timing) ===")
     print(f"Architecture : {args.arch.upper()}")
     print(f"Pipelines    : {P}")
-    print(f"Height/pipe  : {H} PEs")
-    print(f"PE length    : {pe_length} f32")
-    print(f"Per pipeline : {per_pipe} f32  ({per_pipe * 4 / 1024:.1f} KB)")
-    print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB per direction)")
+    print(f"PE length    : {pe_length} f32  ({pe_length * 4 / 1024:.1f} KB)")
+    print(f"Total data   : {total} f32  ({total * 4 / 1024:.1f} KB)")
     print()
 
     # ---- Platform ----
@@ -136,7 +140,7 @@ def main():
 
     # ---- Build and compile layout ----
     print("Building and compiling layout ...")
-    layout, streams = build_layout(platform, P, H, pe_length)
+    layout, streams = build_layout(platform, P, pe_length)
     t_compile_start = time.perf_counter()
     compile_artifacts = layout.compile(out_prefix='out')
     t_compile_end = time.perf_counter()
@@ -150,54 +154,51 @@ def main():
 
     # ---- Data (per pipeline) ----
     data_h2d = []
-    data_d2h = []
+    time_bufs = []
     for i in range(P):
-        data_h2d.append(np.arange(i * per_pipe, (i + 1) * per_pipe, dtype=np.float32))
-        data_d2h.append(np.empty(per_pipe, dtype=np.float32))
+        data_h2d.append(np.arange(i * pe_length, (i + 1) * pe_length, dtype=np.float32))
+        time_bufs.append(np.zeros(3, dtype=np.float32))
 
-    # ---- Timed round-trip (all pipelines concurrent) ----
-    print("Running bandwidth measurement ...")
-    t0 = time.perf_counter()
+    # ---- Transfer (all pipelines concurrent) ----
+    print("Sending data and receiving timestamps ...")
     for i in range(P):
         h2d_stream, d2h_stream = streams[i]
         runtime.send(h2d_stream, data_h2d[i], nonblock=True)
-        runtime.receive(d2h_stream, data_d2h[i], per_pipe, nonblock=True)
+        runtime.receive(d2h_stream, time_bufs[i], 3, nonblock=True)
     runtime.stop()
-    t1 = time.perf_counter()
 
-    # ---- Report ----
-    elapsed_s   = t1 - t0
-    elapsed_us  = elapsed_s * 1e6
-    bytes_one   = total * 4
-    bytes_rt    = bytes_one * 2
-    bw_h2d_mbps = bytes_one / elapsed_s / 1e6
-    bw_rt_mbps  = bytes_rt  / elapsed_s / 1e6
-    bw_rt_gbps  = bytes_rt  / elapsed_s / 1e9
+    # ---- Decode on-device timestamps per pipeline ----
+    print()
+    print(f"--- Results ({P} pipelines, on-device timing) ---")
+
+    data_bytes_per = pe_length * 4
+    all_starts = []
+    all_ends = []
+
+    for i in range(P):
+        ts, te = decode_timestamps(time_bufs[i])
+        all_starts.append(ts)
+        all_ends.append(te)
+        cycles = te - ts
+        time_us = (cycles / 0.85) * 1.0e-3
+        bw_mbps = data_bytes_per / time_us if time_us > 0 else 0.0
+        print(f"  Pipeline {i}: {cycles} cycles, {time_us:.1f} us, {bw_mbps:.2f} MB/s")
+
+    # Aggregate: use earliest start, latest end across all pipelines
+    global_start = min(all_starts)
+    global_end   = max(all_ends)
+    global_cycles = global_end - global_start
+    global_time_us = (global_cycles / 0.85) * 1.0e-3
+    total_bytes = total * 4
+    agg_bw_mbps = total_bytes / global_time_us if global_time_us > 0 else 0.0
+    agg_bw_gbps = agg_bw_mbps / 1000.0
 
     print()
-    print(f"--- Results ({P} pipelines) ---")
-    print(f"Elapsed time        : {elapsed_us:.1f} us  ({elapsed_s * 1e3:.3f} ms)")
-    print(f"Total data (1-way)  : {bytes_one / 1024:.1f} KB  ({P} x {per_pipe * 4 / 1024:.1f} KB)")
-    print(f"Aggregate one-way   : {bw_h2d_mbps:.2f} MB/s")
-    print(f"Aggregate round-trip: {bw_rt_mbps:.2f} MB/s  ({bw_rt_gbps:.4f} GB/s)")
-
-    # ---- Optional verification ----
-    if args.verify:
-        print()
-        all_pass = True
-        for i in range(P):
-            if np.array_equal(data_h2d[i], data_d2h[i]):
-                print(f"Pipeline {i}: PASSED")
-            else:
-                mismatches = np.sum(data_h2d[i] != data_d2h[i])
-                print(f"Pipeline {i}: FAILED ({mismatches}/{per_pipe} elements differ)")
-                bad = np.where(data_h2d[i] != data_d2h[i])[0][:3]
-                for j in bad:
-                    print(f"  [idx={j}] sent={data_h2d[i][j]:.4f}  recv={data_d2h[i][j]:.4f}")
-                all_pass = False
-        if not all_pass:
-            raise RuntimeError("Loopback verification failed")
-        print("All pipelines: PASSED")
+    print(f"  Aggregate:")
+    print(f"    Elapsed cycles      : {global_cycles}")
+    print(f"    Elapsed time        : {global_time_us:.1f} us")
+    print(f"    Total data          : {total_bytes} bytes  ({total_bytes / 1024:.1f} KB)")
+    print(f"    Aggregate H2D BW    : {agg_bw_mbps:.2f} MB/s  ({agg_bw_gbps:.4f} GB/s)")
 
 
 if __name__ == '__main__':
