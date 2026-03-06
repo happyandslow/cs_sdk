@@ -1,0 +1,100 @@
+// Per-PE bandwidth measurement kernel for direct-link testing.
+//
+// Receives pe_length f32 wavelets on in_color (from host via direct stream),
+// records on-device timestamps before and after the DMA transfer, then sends
+// 3 f32 of packed timing data out on out_color.
+//
+// Timestamp packing (same as bandwidth-test/bw_sync_kernel.csl):
+//   time_buf_f32[0] = {tscStart[1], tscStart[0]}   (as u32 bitcast to f32)
+//   time_buf_f32[1] = {tscEnd[0],   tscStart[2]}
+//   time_buf_f32[2] = {tscEnd[2],   tscEnd[1]}
+//
+// Flow:
+//   startup -> enable TSC -> activate recv
+//   recv    -> record time_start -> DMA receive pe_length wavelets -> activate done
+//   done    -> record time_end -> pack timestamps -> send 3 f32 via out_color
+
+param in_color:  comptime_int;
+param out_color: comptime_int;
+param pe_length: u16;
+
+const in_color_obj  = @get_color(in_color);
+const out_color_obj = @get_color(out_color);
+
+const timestamp = @import_module("<time>");
+
+const input_q  = @get_input_queue(0);
+const output_q = @get_output_queue(0);
+
+// Local buffer: stores pe_length f32 wavelets from host.
+var buf = @zeros([pe_length]f32);
+
+// TSC buffers (each is u16[3] = 48 bits).
+var tscStartBuffer = @zeros([timestamp.tsc_size_words]u16);
+var tscEndBuffer   = @zeros([timestamp.tsc_size_words]u16);
+
+// Packed timing output: 3 f32 words.
+var time_buf_f32 = @zeros([3]f32);
+
+// DSDs
+const mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &buf, .extent = pe_length });
+const in_dsd  = @get_dsd(fabin_dsd, .{ .extent       = pe_length,
+                                        .fabric_color  = in_color_obj,
+                                        .input_queue   = input_q });
+
+const time_mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &time_buf_f32, .extent = 3 });
+const time_out_dsd = @get_dsd(fabout_dsd, .{ .extent       = 3,
+                                              .fabric_color  = out_color_obj,
+                                              .output_queue  = output_q });
+
+// Task IDs
+const startup_id = @get_local_task_id(7);
+const recv_id    = @get_local_task_id(8);
+const done_id    = @get_local_task_id(9);
+
+// Step 0: enable the timestamp counter, then activate recv.
+task startup() void {
+  timestamp.enable_tsc();
+  @activate(recv_id);
+}
+
+// Step 1: record time_start, then DMA-receive pe_length wavelets from fabric.
+task recv() void {
+  timestamp.get_timestamp(&tscStartBuffer);
+  @mov32(mem_dsd, in_dsd, .{ .async = true, .activate = done_id });
+}
+
+// Step 2: record time_end, pack timestamps, send timing data out.
+task done() void {
+  timestamp.get_timestamp(&tscEndBuffer);
+
+  // Pack {tscStart, tscEnd} into 3 f32 words (same layout as bandwidth-test).
+  var lo_: u16 = 0;
+  var hi_: u16 = 0;
+
+  lo_ = tscStartBuffer[0];
+  hi_ = tscStartBuffer[1];
+  time_buf_f32[0] = @bitcast(f32, (@as(u32, hi_) << @as(u16, 16)) | @as(u32, lo_));
+
+  lo_ = tscStartBuffer[2];
+  hi_ = tscEndBuffer[0];
+  time_buf_f32[1] = @bitcast(f32, (@as(u32, hi_) << @as(u16, 16)) | @as(u32, lo_));
+
+  lo_ = tscEndBuffer[1];
+  hi_ = tscEndBuffer[2];
+  time_buf_f32[2] = @bitcast(f32, (@as(u32, hi_) << @as(u16, 16)) | @as(u32, lo_));
+
+  @mov32(time_out_dsd, time_mem_dsd, .{ .async = true });
+}
+
+comptime {
+  @bind_local_task(startup, startup_id);
+  @bind_local_task(recv, recv_id);
+  @bind_local_task(done, done_id);
+  @activate(startup_id);
+
+  @initialize_queue(input_q, .{ .color = in_color_obj });
+  if (@is_arch("wse3")) {
+    @initialize_queue(output_q, .{ .color = out_color_obj });
+  }
+}
