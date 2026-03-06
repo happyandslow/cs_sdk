@@ -2,18 +2,19 @@
 """
 Appliance launcher for the bandwidth-test-parallel benchmark.
 
-Stages run.py + helper scripts + CSL source files into a directory,
-passes it to SdkLauncher (which tars and uploads it), then runs:
-    cs_python run.py --cmaddr %CMADDR% --arch <arch> ...
-
-On the worker, get_platform(cmaddr) connects to the CS system and
-provides the full fabric dimensions that SdkLayout.compile() needs.
+Stages run scripts + helper scripts + CSL source files into a directory,
+passes it to SdkLauncher (which tars and uploads it), then runs either
+run.py (single pipeline) or run_parallel.py (multiple pipelines).
 
 Usage:
-    python run_appliance.py                                          # defaults
+    # Single pipeline (default)
     python run_appliance.py --height 8 --pe-length 1024 --arch wse3
-    python run_appliance.py --height 8 --pe-length 1024 --verify
-    python run_appliance.py --simulator                              # appliance simulator
+
+    # Parallel pipelines
+    python run_appliance.py --num-pipelines 4 --height 8 --pe-length 1024
+
+    # With verification
+    python run_appliance.py --num-pipelines 2 --height 4 --pe-length 256 --verify
 """
 
 import argparse
@@ -26,6 +27,7 @@ from cerebras.sdk.client import SdkLauncher
 # Files to stage on the appliance worker.
 FILES_TO_STAGE = [
     'run.py',
+    'run_parallel.py',
     'core.py',
     'demux.py',
     'mux.py',
@@ -41,12 +43,16 @@ def main():
         description='Appliance launcher for bandwidth-test-parallel (direct-link)'
     )
     parser.add_argument(
+        '--num-pipelines', '-P', type=int, default=1,
+        help='Number of parallel pipelines (default: 1 = single pipeline via run.py)'
+    )
+    parser.add_argument(
         '--width', '-W', type=int, default=1,
-        help='Number of PE columns (default: 1)'
+        help='Number of PE columns (default: 1, only used with single pipeline)'
     )
     parser.add_argument(
         '--height', '-H', type=int, default=4,
-        help='Number of PE rows (default: 4)'
+        help='Number of PE rows per pipeline (default: 4)'
     )
     parser.add_argument(
         '--pe-length', '-N', type=int, default=1024,
@@ -83,19 +89,31 @@ def main():
         shutil.copy2(f, os.path.join(staging_dir, f))
 
     verify_flag = '--verify' if args.verify else ''
-    run_cmd = (
-        f"cs_python run.py "
-        f"--width {args.width} "
-        f"--height {args.height} "
-        f"--pe-length {args.pe_length} "
-        f"--arch {args.arch} "
-        f"{verify_flag} "
-        f"--cmaddr %CMADDR%"
-    ).strip()
+
+    if args.num_pipelines > 1:
+        run_cmd = (
+            f"cs_python run_parallel.py "
+            f"--num-pipelines {args.num_pipelines} "
+            f"--height {args.height} "
+            f"--pe-length {args.pe_length} "
+            f"--arch {args.arch} "
+            f"{verify_flag} "
+            f"--cmaddr %CMADDR%"
+        ).strip()
+    else:
+        run_cmd = (
+            f"cs_python run.py "
+            f"--width {args.width} "
+            f"--height {args.height} "
+            f"--pe-length {args.pe_length} "
+            f"--arch {args.arch} "
+            f"{verify_flag} "
+            f"--cmaddr %CMADDR%"
+        ).strip()
 
     print(f"=== bandwidth-test-parallel: Appliance Launcher ===")
     print(f"Architecture : {args.arch.upper()}")
-    print(f"Width  (PEs) : {args.width}")
+    print(f"Pipelines    : {args.num_pipelines}")
     print(f"Height (PEs) : {args.height}")
     print(f"PE length    : {args.pe_length} f32")
     print(f"Simulator    : {args.simulator}")
