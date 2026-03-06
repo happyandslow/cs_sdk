@@ -157,14 +157,14 @@ def main():
     time_bufs = []
     for i in range(P):
         data_h2d.append(np.arange(i * pe_length, (i + 1) * pe_length, dtype=np.float32))
-        time_bufs.append(np.zeros(3, dtype=np.float32))
+        time_bufs.append(np.zeros(4, dtype=np.float32))
 
     # ---- Transfer (all pipelines concurrent) ----
     print("Sending data and receiving timestamps ...")
     for i in range(P):
         h2d_stream, d2h_stream = streams[i]
         runtime.send(h2d_stream, data_h2d[i], nonblock=True)
-        runtime.receive(d2h_stream, time_bufs[i], 3, nonblock=True)
+        runtime.receive(d2h_stream, time_bufs[i], 4, nonblock=True)
     runtime.stop()
 
     # ---- Decode on-device timestamps per pipeline ----

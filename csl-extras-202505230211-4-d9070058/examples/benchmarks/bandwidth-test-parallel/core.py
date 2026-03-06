@@ -70,7 +70,7 @@ def get_direct_core(layout, name, pe_length):
 
     in_port  = core.create_input_port(
         in_color, Edge.LEFT, [RoutingPosition().set_output([Route.RAMP])], pe_length)
-    # Output is 3 f32 (packed timing data).
+    # Output is 4 f32 (packed timing data; ports require even wavelet count).
     out_port = core.create_output_port(
-        out_color, Edge.RIGHT, [RoutingPosition().set_input([Route.RAMP])], 3)
+        out_color, Edge.RIGHT, [RoutingPosition().set_input([Route.RAMP])], 4)
     return (in_port, out_port, core)

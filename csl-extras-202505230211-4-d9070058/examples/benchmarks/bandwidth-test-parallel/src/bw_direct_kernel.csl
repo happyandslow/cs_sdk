@@ -33,8 +33,8 @@ var buf = @zeros([pe_length]f32);
 var tscStartBuffer = @zeros([timestamp.tsc_size_words]u16);
 var tscEndBuffer   = @zeros([timestamp.tsc_size_words]u16);
 
-// Packed timing output: 3 f32 words.
-var time_buf_f32 = @zeros([3]f32);
+// Packed timing output: 4 f32 words (3 data + 1 padding; ports require even wavelet count).
+var time_buf_f32 = @zeros([4]f32);
 
 // DSDs
 const mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &buf, .extent = pe_length });
@@ -42,8 +42,8 @@ const in_dsd  = @get_dsd(fabin_dsd, .{ .extent       = pe_length,
                                         .fabric_color  = in_color_obj,
                                         .input_queue   = input_q });
 
-const time_mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &time_buf_f32, .extent = 3 });
-const time_out_dsd = @get_dsd(fabout_dsd, .{ .extent       = 3,
+const time_mem_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &time_buf_f32, .extent = 4 });
+const time_out_dsd = @get_dsd(fabout_dsd, .{ .extent       = 4,
                                               .fabric_color  = out_color_obj,
                                               .output_queue  = output_q });
 

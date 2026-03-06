@@ -145,13 +145,13 @@ def main():
 
     # ---- Data ----
     data_h2d = np.arange(pe_length, dtype=np.float32)
-    # PE sends back 3 f32 of packed timestamps
-    time_buf = np.zeros(3, dtype=np.float32)
+    # PE sends back 4 f32 of packed timestamps (3 data + 1 padding)
+    time_buf = np.zeros(4, dtype=np.float32)
 
     # ---- Transfer ----
     print("Sending data and receiving timestamps ...")
     runtime.send(h2d_stream, data_h2d, nonblock=True)
-    runtime.receive(d2h_stream, time_buf, 3, nonblock=True)
+    runtime.receive(d2h_stream, time_buf, 4, nonblock=True)
     runtime.stop()
 
     # ---- Decode on-device timestamps ----
