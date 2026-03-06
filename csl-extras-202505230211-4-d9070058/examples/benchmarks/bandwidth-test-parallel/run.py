@@ -167,7 +167,10 @@ def main():
     cycles = time_end - time_start
     # 850 MHz clock: 1 cycle = (1/0.85) ns = (1/0.85)*1e-3 us
     time_us = (cycles / 0.85) * 1.0e-3
-    data_bytes = total_elems * 4
+    # time_start is recorded after the first batch completes, so we measure
+    # (num_batches - 1) batches of steady-state transfer.
+    measured_batches = max(num_batches - 1, 1)
+    data_bytes = measured_batches * buf_size * 4
     bw_mbps = data_bytes / time_us if time_us > 0 else 0.0
     bw_gbps = bw_mbps / 1000.0
 
@@ -177,6 +180,7 @@ def main():
     print(f"time_end            : {time_end}")
     print(f"Elapsed cycles      : {cycles}")
     print(f"Elapsed time        : {time_us:.1f} us")
+    print(f"Measured batches    : {measured_batches} of {num_batches}")
     print(f"Data transferred    : {data_bytes} bytes  ({data_bytes / 1024:.1f} KB)")
     print(f"H2D Bandwidth       : {bw_mbps:.2f} MB/s  ({bw_gbps:.4f} GB/s)")
 

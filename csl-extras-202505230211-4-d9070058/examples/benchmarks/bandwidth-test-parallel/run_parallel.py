@@ -179,7 +179,10 @@ def main():
     print()
     print(f"--- Results ({P} pipelines, on-device timing) ---")
 
-    data_bytes_per = pe_elems * 4
+    # time_start is recorded after the first batch completes, so we measure
+    # (num_batches - 1) batches of steady-state transfer.
+    measured_batches = max(num_batches - 1, 1)
+    data_bytes_per = measured_batches * buf_size * 4
     all_starts = []
     all_ends = []
 
@@ -197,15 +200,15 @@ def main():
     global_end   = max(all_ends)
     global_cycles = global_end - global_start
     global_time_us = (global_cycles / 0.85) * 1.0e-3
-    total_bytes = total * 4
-    agg_bw_mbps = total_bytes / global_time_us if global_time_us > 0 else 0.0
+    total_measured_bytes = P * data_bytes_per
+    agg_bw_mbps = total_measured_bytes / global_time_us if global_time_us > 0 else 0.0
     agg_bw_gbps = agg_bw_mbps / 1000.0
 
     print()
-    print(f"  Aggregate:")
+    print(f"  Aggregate ({measured_batches} of {num_batches} batches measured):")
     print(f"    Elapsed cycles      : {global_cycles}")
     print(f"    Elapsed time        : {global_time_us:.1f} us")
-    print(f"    Total data          : {total_bytes} bytes  ({total_bytes / 1024:.1f} KB)")
+    print(f"    Total data          : {total_measured_bytes} bytes  ({total_measured_bytes / 1024:.1f} KB)")
     print(f"    Aggregate H2D BW    : {agg_bw_mbps:.2f} MB/s  ({agg_bw_gbps:.4f} GB/s)")
 
 

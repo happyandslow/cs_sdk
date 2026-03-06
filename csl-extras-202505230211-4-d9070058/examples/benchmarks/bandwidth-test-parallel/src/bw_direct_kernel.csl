@@ -15,10 +15,15 @@
 //
 // Flow:
 //   startup -> enable TSC -> activate recv
-//   recv    -> record time_start -> DMA receive buf_size wavelets -> activate batch_done
-//   batch_done -> if batches remaining: DMA receive again -> activate batch_done
+//   recv    -> DMA receive buf_size wavelets -> activate batch_done
+//   batch_done -> record time_start (first time only)
+//             -> if batches remaining: DMA receive again -> activate batch_done
 //             -> else: activate done
 //   done    -> record time_end -> pack timestamps -> send 4 f32 via out_color
+//
+// Note: time_start is recorded after the first batch completes (not before),
+// so the measurement excludes host-side startup latency.  Bandwidth is
+// computed over (num_batches - 1) batches of steady-state transfer.
 
 param in_color:  comptime_int;
 param out_color: comptime_int;
@@ -69,15 +74,20 @@ task startup() void {
   @activate(recv_id);
 }
 
-// Step 1: record time_start, then DMA-receive first batch.
+// Step 1: DMA-receive first batch (no timestamp yet — host may not have started sending).
 task recv() void {
-  timestamp.get_timestamp(&tscStartBuffer);
   batches_remaining -= 1;
   @mov32(mem_dsd, in_dsd, .{ .async = true, .activate = batch_done_id });
 }
 
-// Step 2: called after each batch completes. Loop or finish.
+// Step 2: called after each batch completes.
+// Records time_start after the first batch (when data is flowing steadily),
+// then loops for remaining batches or finishes.
 task batch_done() void {
+  if (batches_remaining == num_batches - 1) {
+    // First batch just completed — data is now flowing. Record start time.
+    timestamp.get_timestamp(&tscStartBuffer);
+  }
   if (batches_remaining > 0) {
     batches_remaining -= 1;
     @mov32(mem_dsd, in_dsd, .{ .async = true, .activate = batch_done_id });
