@@ -23,7 +23,6 @@ from cerebras.sdk.runtime.sdkruntimepybind import (
     SdkTarget,
     SimfabConfig,
     Color,
-    Edge,
     Route,
     RoutingPosition,
     get_platform,
@@ -32,18 +31,19 @@ from cerebras.geometry.geometry import IntVector
 
 
 def test_io_loc(platform, csl_path, y, out_dir):
-    """Try to compile with io_loc at (0, y). Returns True if valid."""
+    """Try create_input_stream_from_loc at (0, y). Returns True if valid."""
     try:
         layout = SdkLayout(platform)
         region = layout.create_code_region(csl_path, 'r', 1, 1)
-        region.place(5, y)  # Place core near the io_loc row
+        region.place(0, y)  # Place core AT the LVDS position
 
         c = Color('c')
         region.set_param_all(c)
-        rp = RoutingPosition().set_output([Route.RAMP])
-        port = region.create_input_port(c, Edge.LEFT, [rp], 10)
+        # Route: WEST -> RAMP
+        region.paint_all(c,
+            [RoutingPosition().set_input([Route.WEST]).set_output([Route.RAMP])])
 
-        layout.create_input_stream(port, io_loc=IntVector(0, y))
+        layout.create_input_stream_from_loc(IntVector(0, y), c)
         layout.compile(out_prefix=os.path.join(out_dir, f'test_{y}'))
         return True
     except RuntimeError as e:

@@ -113,15 +113,15 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
         core.paint_all(out_color,
             [RoutingPosition().set_input([Route.RAMP]).set_output([Route.EAST])])
 
-        # Place core at valid LVDS position
-        core.place(1, io_y)
+        # Place core at valid LVDS position (column 0 = WEST edge)
+        core.place(0, io_y)
 
         # Direct LVDS connection — bypasses adaptor/mux merging.
         # Each call creates its own LVDS port entry in the port map.
         h2d_name = layout.create_input_stream_from_loc(
-            IntVector(1, io_y), in_color, prefix=f'h2d_{i}')
+            IntVector(0, io_y), in_color, prefix=f'h2d_{i}')
         d2h_name = layout.create_output_stream_from_loc(
-            IntVector(1, io_y), out_color, prefix=f'd2h_{i}')
+            IntVector(0, io_y), out_color, prefix=f'd2h_{i}')
         streams.append((h2d_name, d2h_name))
 
     return layout, streams
