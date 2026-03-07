@@ -37,7 +37,7 @@ def test_io_loc(platform, csl_path, y, out_dir):
         region = layout.create_code_region(csl_path, 'r', 1, 1)
         region.place(0, y)  # Place core AT the LVDS position
 
-        c = Color('c')
+        c = Color('c', 0)  # explicit physical color ID required by _from_loc
         region.set_param_all(c)
         # Route: WEST -> RAMP
         region.paint_all(c,

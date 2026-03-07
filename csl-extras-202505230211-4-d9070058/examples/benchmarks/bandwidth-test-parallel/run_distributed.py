@@ -101,8 +101,10 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
         core.set_param_all('buf_size', buf_size)
         core.set_param_all('num_batches', num_batches)
 
-        in_color = core.color('in_color')
-        out_color = core.color('out_color')
+        # _from_loc requires explicit physical color IDs.
+        # Each pipeline uses different color IDs to avoid conflicts.
+        in_color = core.color('in_color', 2 * i)
+        out_color = core.color('out_color', 2 * i + 1)
         core.set_param_all(in_color)
         core.set_param_all(out_color)
 
