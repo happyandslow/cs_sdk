@@ -78,21 +78,33 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
 
     Returns: (layout, [(h2d_stream, d2h_stream), ...])
     """
-    IO_SPACING = 16  # rows between pipelines' io regions
+    # Valid I/O port Y positions on WSE-3 WEST edge (discovered empirically):
+    # [0, 144, 288, 432, 576, 720, 864, 1008] — spaced 144 rows apart.
+    # Each position supports both x=0 and x=1.
+    VALID_IO_Y = [i * 144 for i in range(8)]
+    MAX_PIPELINES = len(VALID_IO_Y)
+
+    if num_pipelines > MAX_PIPELINES:
+        raise ValueError(
+            f"num_pipelines={num_pipelines} exceeds max {MAX_PIPELINES} "
+            f"(limited by valid I/O port locations on WSE-3)"
+        )
 
     layout = SdkLayout(platform)
     streams = []
 
     for i in range(num_pipelines):
+        io_y = VALID_IO_Y[i]
+
         (core_in_port, core_out_port, core) = get_direct_core(
             layout, f'core_{i}', buf_size, num_batches
         )
-        core.place(1, i * IO_SPACING)
+        core.place(1, io_y)
 
         # Place each pipeline's io regions at separate WEST-edge locations
         # so each gets its own LVDS port pair.
-        in_io_loc = IntVector(0, i * IO_SPACING)
-        out_io_loc = IntVector(0, i * IO_SPACING + 1)
+        in_io_loc = IntVector(0, io_y)
+        out_io_loc = IntVector(0, io_y + 1)
 
         h2d_stream = layout.create_input_stream(
             core_in_port, io_loc=in_io_loc, io_buffer_size=8192)
