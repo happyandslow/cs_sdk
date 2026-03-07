@@ -16,6 +16,7 @@ import time
 
 import numpy as np
 
+from cerebras.geometry.geometry import IntVector
 from cerebras.sdk.runtime.sdkruntimepybind import (
     SdkCompileArtifacts,
     SdkLayout,
@@ -70,8 +71,15 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
     """
     Construct an SdkLayout with num_pipelines independent direct-core PEs.
 
+    Each pipeline gets its own explicit io_loc so that the SDK creates
+    separate LVDS ports per pipeline (rather than merging all streams
+    into a single adaptor/mux). This allows each pipeline's streams to
+    be assigned to a different SdkRuntime instance / NIC.
+
     Returns: (layout, [(h2d_stream, d2h_stream), ...])
     """
+    IO_SPACING = 16  # rows between pipelines' io regions
+
     layout = SdkLayout(platform)
     streams = []
 
@@ -79,23 +87,60 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
         (core_in_port, core_out_port, core) = get_direct_core(
             layout, f'core_{i}', buf_size, num_batches
         )
-        core.place(1, i * 16)
+        core.place(1, i * IO_SPACING)
 
-        h2d_stream = layout.create_input_stream(core_in_port, io_buffer_size=8192)
-        d2h_stream = layout.create_output_stream(core_out_port, io_buffer_size=8192)
+        # Place each pipeline's io regions at separate WEST-edge locations
+        # so each gets its own LVDS port pair.
+        in_io_loc = IntVector(0, i * IO_SPACING)
+        out_io_loc = IntVector(0, i * IO_SPACING + 1)
+
+        h2d_stream = layout.create_input_stream(
+            core_in_port, io_loc=in_io_loc, io_buffer_size=8192)
+        d2h_stream = layout.create_output_stream(
+            core_out_port, io_loc=out_io_loc, io_buffer_size=8192)
         streams.append((h2d_stream, d2h_stream))
 
     return layout, streams
 
 
 # ---------------------------------------------------------------------------
-# Port map handling
+# Port map splitting
 # ---------------------------------------------------------------------------
-# NOTE: The SdkLayout creates a single mux/adaptor for all streams, so the
-# port map only has 1 IN + 1 OUT physical bus regardless of pipeline count.
-# We cannot split by logical stream name. Instead, all runtimes (master +
-# workers) share the full port map. The SDK routes send()/receive() to the
-# correct pipeline internally via the logical stream name.
+
+def split_port_map(full_port_map, stream_names, out_dir):
+    """Split a full port map into master (empty) and per-worker port maps.
+
+    With explicit io_loc, each pipeline should have its own LVDS port pair
+    in the port map. Each worker gets a port map with only its buses.
+    The master gets all buses for lifecycle (load/run/stop).
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    all_buses = full_port_map['buses']
+
+    # Master: needs all buses for load/stop but won't send/receive
+    master_path = os.path.join(out_dir, 'port_map_master.json')
+    with open(master_path, 'w') as f:
+        json.dump(full_port_map, f, indent=2)
+
+    # Per-worker: filter buses by port_name matching the stream names
+    worker_paths = []
+    for i, (h2d_name, d2h_name) in enumerate(stream_names):
+        worker_buses = [
+            bus for bus in all_buses
+            if bus['port_name'] in (h2d_name, d2h_name)
+        ]
+        if not worker_buses:
+            print(f"  WARNING: No buses matched for worker {i} "
+                  f"(h2d={h2d_name}, d2h={d2h_name})")
+            print(f"  Available port_names: "
+                  f"{[b['port_name'] for b in all_buses]}")
+        worker_map = {**full_port_map, 'buses': worker_buses}
+        path = os.path.join(out_dir, f'port_map_worker_{i}.json')
+        with open(path, 'w') as f:
+            json.dump(worker_map, f, indent=2)
+        worker_paths.append(path)
+
+    return master_path, worker_paths
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +205,11 @@ def main():
     # ---- Port map and stream names ----
     port_map_path = os.path.join('out', 'out_port_map.json')
     with open(port_map_path) as f:
+        port_map_content = f.read()
         print(f"Port map ({f.name}):")
-        print(f.read())
+        print(port_map_content)
+
+    full_port_map = json.loads(port_map_content)
 
     stream_names = []
     for h2d_stream, d2h_stream in streams:
@@ -169,9 +217,14 @@ def main():
     print(f"Logical stream names: {stream_names}")
     print()
 
-    # ---- Master runtime (lifecycle only, full port map) ----
+    # Split port map: master gets all buses, each worker gets its own
+    master_map_path, worker_map_paths = split_port_map(
+        full_port_map, stream_names, 'out'
+    )
+
+    # ---- Master runtime (lifecycle, full port map) ----
     artifacts = SdkCompileArtifacts('out')
-    artifacts.add_port_mapping(port_map_path)
+    artifacts.add_port_mapping(master_map_path)
     runtime = SdkRuntime(artifacts, platform, memcpy_required=False)
     runtime.load()
     runtime.run()
@@ -191,7 +244,7 @@ def main():
             args=(
                 i,
                 'out',
-                port_map_path,
+                worker_map_paths[i],
                 h2d_name,
                 d2h_name,
                 buf_size,
