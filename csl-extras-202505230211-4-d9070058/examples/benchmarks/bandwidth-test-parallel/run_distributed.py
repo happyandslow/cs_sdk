@@ -18,6 +18,8 @@ import numpy as np
 
 from cerebras.geometry.geometry import IntVector
 from cerebras.sdk.runtime.sdkruntimepybind import (
+    Route,
+    RoutingPosition,
     SdkCompileArtifacts,
     SdkLayout,
     SdkRuntime,
@@ -26,7 +28,6 @@ from cerebras.sdk.runtime.sdkruntimepybind import (
     get_platform,
 )
 
-from core import get_direct_core
 from worker import worker_main
 
 
@@ -71,16 +72,14 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
     """
     Construct an SdkLayout with num_pipelines independent direct-core PEs.
 
-    Each pipeline gets its own explicit io_loc so that the SDK creates
-    separate LVDS ports per pipeline (rather than merging all streams
-    into a single adaptor/mux). This allows each pipeline's streams to
-    be assigned to a different SdkRuntime instance / NIC.
+    Uses create_input_stream_from_loc / create_output_stream_from_loc to
+    bypass the SDK's adaptor/mux merging. Each pipeline's PE is placed at
+    a valid LVDS position so it gets its own direct LVDS port pair.
 
     Returns: (layout, [(h2d_stream, d2h_stream), ...])
     """
     # Valid I/O port Y positions on WSE-3 WEST edge (discovered empirically):
     # [0, 144, 288, 432, 576, 720, 864, 1008] — spaced 144 rows apart.
-    # Each position supports both x=0 and x=1.
     VALID_IO_Y = [i * 144 for i in range(8)]
     MAX_PIPELINES = len(VALID_IO_Y)
 
@@ -96,21 +95,34 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
     for i in range(num_pipelines):
         io_y = VALID_IO_Y[i]
 
-        (core_in_port, core_out_port, core) = get_direct_core(
-            layout, f'core_{i}', buf_size, num_batches
-        )
+        # Create 1x1 core region with in/out colors
+        core = layout.create_code_region(
+            './src/bw_direct_kernel.csl', f'core_{i}', 1, 1)
+        core.set_param_all('buf_size', buf_size)
+        core.set_param_all('num_batches', num_batches)
+
+        in_color = core.color('in_color')
+        out_color = core.color('out_color')
+        core.set_param_all(in_color)
+        core.set_param_all(out_color)
+
+        # Route in_color: WEST -> RAMP (receive from host)
+        core.paint_all(in_color,
+            [RoutingPosition().set_input([Route.WEST]).set_output([Route.RAMP])])
+        # Route out_color: RAMP -> EAST (send to host)
+        core.paint_all(out_color,
+            [RoutingPosition().set_input([Route.RAMP]).set_output([Route.EAST])])
+
+        # Place core at valid LVDS position
         core.place(1, io_y)
 
-        # Place each pipeline's io regions at separate WEST-edge locations
-        # so each gets its own LVDS port pair.
-        in_io_loc = IntVector(0, io_y)
-        out_io_loc = IntVector(0, io_y + 1)
-
-        h2d_stream = layout.create_input_stream(
-            core_in_port, io_loc=in_io_loc, io_buffer_size=8192)
-        d2h_stream = layout.create_output_stream(
-            core_out_port, io_loc=out_io_loc, io_buffer_size=8192)
-        streams.append((h2d_stream, d2h_stream))
+        # Direct LVDS connection — bypasses adaptor/mux merging.
+        # Each call creates its own LVDS port entry in the port map.
+        h2d_name = layout.create_input_stream_from_loc(
+            IntVector(1, io_y), in_color, prefix=f'h2d_{i}')
+        d2h_name = layout.create_output_stream_from_loc(
+            IntVector(1, io_y), out_color, prefix=f'd2h_{i}')
+        streams.append((h2d_name, d2h_name))
 
     return layout, streams
 
@@ -223,9 +235,7 @@ def main():
 
     full_port_map = json.loads(port_map_content)
 
-    stream_names = []
-    for h2d_stream, d2h_stream in streams:
-        stream_names.append((h2d_stream, d2h_stream))
+    stream_names = streams  # already (h2d_name, d2h_name) string tuples
     print(f"Logical stream names: {stream_names}")
     print()
 
