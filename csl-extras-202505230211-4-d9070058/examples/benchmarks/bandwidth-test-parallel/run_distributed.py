@@ -18,6 +18,7 @@ import numpy as np
 
 from cerebras.geometry.geometry import IntVector
 from cerebras.sdk.runtime.sdkruntimepybind import (
+    Edge,
     Route,
     RoutingPosition,
     SdkCompileArtifacts,
@@ -118,12 +119,16 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
         # Place core at valid LVDS position (column 0 = WEST edge)
         core.place(0, io_y)
 
-        # Direct LVDS connection — bypasses adaptor/mux merging.
-        # Each call creates its own LVDS port entry in the port map.
+        # H2D: use _from_loc for separate LVDS per pipeline (the big data)
         h2d_name = layout.create_input_stream_from_loc(
             IntVector(0, io_y), in_color, prefix=f'h2d_{i}')
-        d2h_name = layout.create_output_stream_from_loc(
-            IntVector(0, io_y), out_color, prefix=f'd2h_{i}')
+
+        # D2H: use port-based stream (small timestamp data, shared mux is fine)
+        out_port = core.create_output_port(
+            out_color, Edge.RIGHT,
+            [RoutingPosition().set_input([Route.RAMP])], 4)
+        d2h_name = layout.create_output_stream(out_port)
+
         streams.append((h2d_name, d2h_name))
 
     return layout, streams
