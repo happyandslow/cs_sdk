@@ -79,57 +79,23 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
         (core_in_port, core_out_port, core) = get_direct_core(
             layout, f'core_{i}', buf_size, num_batches
         )
-        core.place(1, i)
+        core.place(1, i * 16)
 
-        h2d_stream = layout.create_input_stream(core_in_port)
-        d2h_stream = layout.create_output_stream(core_out_port)
+        h2d_stream = layout.create_input_stream(core_in_port, io_buffer_size=8192)
+        d2h_stream = layout.create_output_stream(core_out_port, io_buffer_size=8192)
         streams.append((h2d_stream, d2h_stream))
 
     return layout, streams
 
 
 # ---------------------------------------------------------------------------
-# Port map splitting
+# Port map handling
 # ---------------------------------------------------------------------------
-
-def split_port_map(full_port_map, stream_names, out_dir):
-    """Split a full port map into master and per-worker port maps.
-
-    Parameters
-    ----------
-    full_port_map : dict
-        The full port map loaded from out/out_port_map.json.
-    stream_names : list of (str, str)
-        List of (h2d_name, d2h_name) tuples, one per pipeline.
-    out_dir : str
-        Directory to write the port map JSON files.
-
-    Returns
-    -------
-    (master_map_path, [worker_map_paths...])
-    """
-    os.makedirs(out_dir, exist_ok=True)
-
-    # Master port map: no buses
-    master_map = {**full_port_map, 'buses': []}
-    master_map_path = os.path.join(out_dir, 'port_map_master.json')
-    with open(master_map_path, 'w') as f:
-        json.dump(master_map, f, indent=2)
-
-    # Per-worker port maps: only the 2 buses for that worker's streams
-    worker_map_paths = []
-    for i, (h2d_name, d2h_name) in enumerate(stream_names):
-        worker_buses = [
-            bus for bus in full_port_map['buses']
-            if bus['port_name'] in (h2d_name, d2h_name)
-        ]
-        worker_map = {**full_port_map, 'buses': worker_buses}
-        worker_map_path = os.path.join(out_dir, f'port_map_worker_{i}.json')
-        with open(worker_map_path, 'w') as f:
-            json.dump(worker_map, f, indent=2)
-        worker_map_paths.append(worker_map_path)
-
-    return master_map_path, worker_map_paths
+# NOTE: The SdkLayout creates a single mux/adaptor for all streams, so the
+# port map only has 1 IN + 1 OUT physical bus regardless of pipeline count.
+# We cannot split by logical stream name. Instead, all runtimes (master +
+# workers) share the full port map. The SDK routes send()/receive() to the
+# correct pipeline internally via the logical stream name.
 
 
 # ---------------------------------------------------------------------------
@@ -191,24 +157,21 @@ def main():
     print(f"Compilation done in {(t_compile_end - t_compile_start):.1f} s")
     print()
 
-    # ---- Read and split port maps ----
-    with open('out/out_port_map.json') as f:
-        print(f.name)
+    # ---- Port map and stream names ----
+    port_map_path = os.path.join('out', 'out_port_map.json')
+    with open(port_map_path) as f:
+        print(f"Port map ({f.name}):")
         print(f.read())
-        f.seek(0)
-        full_port_map = json.load(f)
 
     stream_names = []
     for h2d_stream, d2h_stream in streams:
         stream_names.append((h2d_stream, d2h_stream))
+    print(f"Logical stream names: {stream_names}")
+    print()
 
-    master_map_path, worker_map_paths = split_port_map(
-        full_port_map, stream_names, 'out'
-    )
-
-    # ---- Master runtime (lifecycle only, no data streams) ----
+    # ---- Master runtime (lifecycle only, full port map) ----
     artifacts = SdkCompileArtifacts('out')
-    artifacts.add_port_mapping(master_map_path)
+    artifacts.add_port_mapping(port_map_path)
     runtime = SdkRuntime(artifacts, platform, memcpy_required=False)
     runtime.load()
     runtime.run()
@@ -228,7 +191,7 @@ def main():
             args=(
                 i,
                 'out',
-                worker_map_paths[i],
+                port_map_path,
                 h2d_name,
                 d2h_name,
                 buf_size,
