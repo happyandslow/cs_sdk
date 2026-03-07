@@ -4,6 +4,8 @@ param memcpy_params: comptime_struct;
 // memcpy module provides infrastructure for copying data
 // and launching functions from the host
 const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+const prt = @import_module("<simprint>");
+const layout_mod = @import_module("<layout>");
 
 // Constants definining dimensions of our matrix
 const M: i16 = 4;
@@ -19,8 +21,23 @@ var y: [M]f32;
 // Ptr is const, so host can read but not write to y
 const y_ptr: [*]f32 = &y;
 
+
+var px: i16 = 0;
+var py: i16 = 0;
+
 // Initialize matrix and vectors
 fn initialize() void {
+
+  px = @as(i16, layout_mod.get_x_coord());
+  py = @as(i16, layout_mod.get_y_coord());
+
+  prt.print_string("PE : ");
+  prt.print_string("(");
+  prt.print_u16_decimal(@as(u16, px));
+  prt.print_string(",");
+  prt.print_u16_decimal(@as(u16, py));
+  prt.print_string(") ");
+
   // for loop with range syntax
   for (@range(i16, M*N)) |idx| {
     A[idx] = @as(f32, idx);

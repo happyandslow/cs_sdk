@@ -193,6 +193,9 @@ def main():
 
     # ---- Read and split port maps ----
     with open('out/out_port_map.json') as f:
+        print(f.name)
+        print(f.read())
+        f.seek(0)
         full_port_map = json.load(f)
 
     stream_names = []

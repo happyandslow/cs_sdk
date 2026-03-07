@@ -28,6 +28,7 @@ FILES_TO_STAGE = [
     'worker.py',
     'core.py',
     'src/bw_direct_kernel.csl',
+    'out/out_port_map.json',
 ]
 
 
@@ -69,6 +70,7 @@ def main():
         shutil.rmtree(staging_dir)
     os.makedirs(staging_dir)
     os.makedirs(os.path.join(staging_dir, 'src'), exist_ok=True)
+    os.makedirs(os.path.join(staging_dir, 'out'), exist_ok=True)
     for f in FILES_TO_STAGE:
         shutil.copy2(f, os.path.join(staging_dir, f))
 

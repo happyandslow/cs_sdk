@@ -60,6 +60,9 @@ python run_appliance.py --buf-size 1024 --num-batches 100 --arch wse3
 # 4 parallel pipelines
 python run_appliance.py --num-pipelines 4 --buf-size 1024 --num-batches 10 --arch wse3
 
+## max bandwidth
+python run_appliance.py -P 16 -B 8192 -K 100000 --arch wse3
+
 # Appliance simulator mode
 python run_appliance.py --num-pipelines 2 --buf-size 256 --simulator
 ```

@@ -87,10 +87,10 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
         (core_in_port, core_out_port, core) = get_direct_core(
             layout, f'core_{i}', buf_size, num_batches
         )
-        core.place(1, i)
+        core.place(1, i * 16)
 
-        h2d_stream = layout.create_input_stream(core_in_port)
-        d2h_stream = layout.create_output_stream(core_out_port)
+        h2d_stream = layout.create_input_stream(core_in_port, io_buffer_size = 8192)
+        d2h_stream = layout.create_output_stream(core_out_port, io_buffer_size = 8192)
         streams.append((h2d_stream, d2h_stream))
 
     return layout, streams
@@ -193,7 +193,7 @@ def main():
         cycles = te - ts
         time_us = (cycles / 0.85) * 1.0e-3
         bw_mbps = data_bytes_per / time_us if time_us > 0 else 0.0
-        print(f"  Pipeline {i}: {cycles} cycles, {time_us:.1f} us, {bw_mbps:.2f} MB/s")
+        print(f"  Pipeline {i}: {cycles} cycles, {time_us:.1f} us, {bw_mbps:.2f} MB/s start: {ts}, end: {te}")
 
     # Aggregate: use earliest start, latest end across all pipelines
     global_start = min(all_starts)

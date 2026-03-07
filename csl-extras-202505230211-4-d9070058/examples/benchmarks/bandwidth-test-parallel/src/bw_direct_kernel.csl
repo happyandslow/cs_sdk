@@ -63,7 +63,7 @@ const time_out_dsd = @get_dsd(fabout_dsd, .{ .extent       = 4,
                                               .output_queue  = output_q });
 
 // Task IDs
-const startup_id    = @get_local_task_id(7);
+const startup_id    = @get_local_task_id(11);
 const recv_id       = @get_local_task_id(8);
 const batch_done_id = @get_local_task_id(9);
 const done_id       = @get_local_task_id(10);
