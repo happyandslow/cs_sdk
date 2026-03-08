@@ -6,6 +6,7 @@ load() + run() on the full program; workers only attach to the already-
 running fabric via their own SdkRuntime instance with a filtered port map.
 """
 
+import os
 import numpy as np
 
 from cerebras.sdk.runtime.sdkruntimepybind import (
@@ -61,6 +62,22 @@ def worker_main(
         # Block until master has loaded and started the program.
         load_done_event.wait()
 
+        # Debug: print artifact directory info
+        abs_artifact_dir = os.path.abspath(artifact_dir)
+        print(f"[Worker {rank}] CWD: {os.getcwd()}", flush=True)
+        print(f"[Worker {rank}] artifact_dir arg: '{artifact_dir}'", flush=True)
+        print(f"[Worker {rank}] artifact_dir abs: '{abs_artifact_dir}'", flush=True)
+        print(f"[Worker {rank}] exists: {os.path.exists(abs_artifact_dir)}", flush=True)
+        if os.path.exists(abs_artifact_dir):
+            for root, dirs, files in os.walk(abs_artifact_dir):
+                level = root.replace(abs_artifact_dir, '').count(os.sep)
+                indent = '  ' * level
+                print(f"[Worker {rank}]   {indent}{os.path.basename(root)}/", flush=True)
+                for f in files:
+                    fpath = os.path.join(root, f)
+                    fsize = os.path.getsize(fpath)
+                    print(f"[Worker {rank}]   {indent}  {f}  ({fsize} bytes)", flush=True)
+
         # Resolve target enum from arch string.
         if arch == "wse3":
             target = SdkTarget.WSE3
@@ -71,10 +88,18 @@ def worker_main(
         platform = get_platform(cmaddr, SimfabConfig(), target)
 
         # Build compile artifacts with this worker's port mapping.
+        print(f"[Worker {rank}] Creating SdkCompileArtifacts('{artifact_dir}') ...", flush=True)
         artifacts = SdkCompileArtifacts(artifact_dir)
+        print(f"[Worker {rank}] SdkCompileArtifacts created: {artifacts}", flush=True)
+
+        # Check what methods/attrs are available on artifacts
+        artifact_attrs = [a for a in dir(artifacts) if not a.startswith('_')]
+        print(f"[Worker {rank}] Artifact attrs: {artifact_attrs}", flush=True)
+
         #artifacts.add_port_mapping(port_map_path)
 
         # Create runtime (do NOT load — master already did that).
+        print(f"[Worker {rank}] Creating SdkRuntime ...", flush=True)
         runtime = SdkRuntime(artifacts, platform, memcpy_required=False)
         runtime.run()
 

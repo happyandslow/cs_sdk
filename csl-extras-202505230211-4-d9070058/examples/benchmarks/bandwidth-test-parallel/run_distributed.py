@@ -256,6 +256,18 @@ def main():
     compile_artifacts = layout.compile(out_prefix='out')
     t_compile_end = time.perf_counter()
     print(f"Compilation done in {(t_compile_end - t_compile_start):.1f} s")
+
+    # Debug: list artifact directory contents
+    abs_out = os.path.abspath('out')
+    print(f"Artifact directory: {abs_out}")
+    for root, dirs, files in os.walk(abs_out):
+        level = root.replace(abs_out, '').count(os.sep)
+        indent = '  ' * level
+        print(f"  {indent}{os.path.basename(root)}/")
+        for f_name in files:
+            fpath = os.path.join(root, f_name)
+            fsize = os.path.getsize(fpath)
+            print(f"  {indent}  {f_name}  ({fsize} bytes)")
     print()
 
     # ---- Port map and stream names ----
