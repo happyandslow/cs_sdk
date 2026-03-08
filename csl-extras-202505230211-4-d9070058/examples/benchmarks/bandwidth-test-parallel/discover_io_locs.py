@@ -43,7 +43,8 @@ def test_io_loc(platform, csl_path, y, out_dir):
         region.paint_all(c,
             [RoutingPosition().set_input([Route.WEST]).set_output([Route.RAMP])])
 
-        layout.create_input_stream_from_loc(IntVector(0, y), c)
+        # layout.create_input_stream_from_loc(IntVector(0, y), c)
+        layout.create_output_stream_from_loc(IntVector(0, y), c)
         layout.compile(out_prefix=os.path.join(out_dir, f'test_{y}'))
         return True
     except RuntimeError as e:

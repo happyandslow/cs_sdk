@@ -92,29 +92,52 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
 
     layout = SdkLayout(platform)
     streams = []
+    
+     # Create 1x1 core region with in/out colors
+    core = layout.create_code_region(
+        './src/bw_direct_kernel.csl', f'core', 1, 1)
+    core.set_param_all('buf_size', buf_size)
+    core.set_param_all('num_batches', num_batches)
+
+    # _from_loc requires explicit physical color IDs.
+    # Each pipeline uses different color IDs to avoid conflicts.
+    # in_color = core.color(f'in_color', 2 * i)
+    # out_color = core.color(f'out_color', 2 * i + 1)
+    in_color = core.color(f'in_color', 0)
+    out_color = core.color(f'out_color', 1)
+    core.set_param_all(in_color)
+    core.set_param_all(out_color)
+
+    # Route in_color: WEST -> RAMP (receive from host)
+    core.paint_all(in_color,
+        [RoutingPosition().set_input([Route.WEST]).set_output([Route.RAMP])])
+    # Route out_color: RAMP -> EAST (send to host)
+    core.paint_all(out_color,
+        [RoutingPosition().set_input([Route.RAMP]).set_output([Route.EAST])])
+
 
     for i in range(num_pipelines):
         io_y = VALID_IO_Y[i]
 
-        # Create 1x1 core region with in/out colors
-        core = layout.create_code_region(
-            './src/bw_direct_kernel.csl', f'core_{i}', 1, 1)
-        core.set_param_all('buf_size', buf_size)
-        core.set_param_all('num_batches', num_batches)
+        # # Create 1x1 core region with in/out colors
+        # core = layout.create_code_region(
+        #     './src/bw_direct_kernel.csl', f'core_{i}', 1, 1)
+        # core.set_param_all('buf_size', buf_size)
+        # core.set_param_all('num_batches', num_batches)
 
-        # _from_loc requires explicit physical color IDs.
-        # Each pipeline uses different color IDs to avoid conflicts.
-        in_color = core.color('in_color', 2 * i)
-        out_color = core.color('out_color', 2 * i + 1)
-        core.set_param_all(in_color)
-        core.set_param_all(out_color)
+        # # _from_loc requires explicit physical color IDs.
+        # # Each pipeline uses different color IDs to avoid conflicts.
+        # in_color = core.color(f'in_color', 2 * i)
+        # out_color = core.color(f'out_color', 2 * i + 1)
+        # core.set_param_all(in_color)
+        # core.set_param_all(out_color)
 
-        # Route in_color: WEST -> RAMP (receive from host)
-        core.paint_all(in_color,
-            [RoutingPosition().set_input([Route.WEST]).set_output([Route.RAMP])])
-        # Route out_color: RAMP -> EAST (send to host)
-        core.paint_all(out_color,
-            [RoutingPosition().set_input([Route.RAMP]).set_output([Route.EAST])])
+        # # Route in_color: WEST -> RAMP (receive from host)
+        # core.paint_all(in_color,
+        #     [RoutingPosition().set_input([Route.WEST]).set_output([Route.RAMP])])
+        # # Route out_color: RAMP -> EAST (send to host)
+        # core.paint_all(out_color,
+        #     [RoutingPosition().set_input([Route.RAMP]).set_output([Route.EAST])])
 
         # Place core at valid LVDS position (column 0 = WEST edge)
         core.place(0, io_y)
@@ -124,10 +147,12 @@ def build_layout(platform, num_pipelines, buf_size, num_batches):
             IntVector(0, io_y), in_color, prefix=f'h2d_{i}')
 
         # D2H: use port-based stream (small timestamp data, shared mux is fine)
-        out_port = core.create_output_port(
-            out_color, Edge.RIGHT,
-            [RoutingPosition().set_input([Route.RAMP])], 4)
-        d2h_name = layout.create_output_stream(out_port)
+        # out_port = core.create_output_port(
+        #     out_color, Edge.RIGHT,
+        #     [RoutingPosition().set_input([Route.RAMP])], 4)
+        d2h_name = layout.create_output_stream_from_loc(
+            IntVector(1, io_y + 1), out_color, prefix=f'h2d_{i}')
+        # d2h_name = layout.create_output_stream(out_port)
 
         streams.append((h2d_name, d2h_name))
 
@@ -247,14 +272,15 @@ def main():
     print()
 
     # Split port map: master gets all buses, each worker gets its own
-    master_map_path, worker_map_paths = split_port_map(
-        full_port_map, stream_names, 'out'
-    )
+    # master_map_path, worker_map_paths = split_port_map(
+    #     full_port_map, stream_names, 'out'
+    # )
 
     # ---- Master runtime (lifecycle, full port map) ----
     artifacts = SdkCompileArtifacts('out')
-    artifacts.add_port_mapping(master_map_path)
-    runtime = SdkRuntime(artifacts, platform, memcpy_required=False)
+    # artifacts.add_port_mapping(master_map_path)
+    print(f"Artifacts: {artifacts}")
+    runtime = SdkRuntime(compile_artifacts, platform, memcpy_required=False)
     runtime.load()
     runtime.run()
 
@@ -273,7 +299,7 @@ def main():
             args=(
                 i,
                 'out',
-                worker_map_paths[i],
+                None, #worker_map_paths[i],
                 h2d_name,
                 d2h_name,
                 buf_size,

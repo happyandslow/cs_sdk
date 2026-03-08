@@ -72,7 +72,7 @@ def worker_main(
 
         # Build compile artifacts with this worker's port mapping.
         artifacts = SdkCompileArtifacts(artifact_dir)
-        artifacts.add_port_mapping(port_map_path)
+        #artifacts.add_port_mapping(port_map_path)
 
         # Create runtime (do NOT load — master already did that).
         runtime = SdkRuntime(artifacts, platform, memcpy_required=False)
